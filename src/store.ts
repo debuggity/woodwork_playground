@@ -7,6 +7,7 @@ interface AppState {
   selectedId: string | null;
   hoveredId: string | null;
   tool: ToolType;
+  explodeFactor: number;
   
   addPart: (part: PartData) => void;
   updatePart: (id: string, updates: Partial<PartData>) => void;
@@ -21,6 +22,7 @@ interface AppState {
   toggleSnap: () => void;
   floorEnabled: boolean;
   toggleFloor: () => void;
+  setExplodeFactor: (value: number) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -28,6 +30,7 @@ export const useStore = create<AppState>((set) => ({
   selectedId: null,
   hoveredId: null,
   tool: 'select',
+  explodeFactor: 0,
   snapEnabled: true, // Default to true for easier alignment
   floorEnabled: false,
 
@@ -72,11 +75,13 @@ export const useStore = create<AppState>((set) => ({
 
   setTool: (tool) => set({ tool }),
 
-  resetScene: () => set({ parts: [], selectedId: null, hoveredId: null }),
+  resetScene: () => set({ parts: [], selectedId: null, hoveredId: null, explodeFactor: 0 }),
 
   setParts: (parts) => set({ parts, selectedId: null, hoveredId: null }),
 
   toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
 
   toggleFloor: () => set((state) => ({ floorEnabled: !state.floorEnabled })),
+
+  setExplodeFactor: (value) => set({ explodeFactor: Math.max(0, Math.min(1, value)) }),
 }));

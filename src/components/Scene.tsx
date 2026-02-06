@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
 import { useStore } from '../store';
@@ -6,6 +6,21 @@ import { PartObject } from './PartObject';
 
 export const Scene: React.FC = () => {
   const { parts, selectPart, setHoveredId, floorEnabled } = useStore();
+  const assemblyCenter = useMemo<[number, number, number]>(() => {
+    if (parts.length === 0) return [0, 0, 0];
+
+    const sum = parts.reduce(
+      (acc, part) => {
+        acc[0] += part.position[0];
+        acc[1] += part.position[1];
+        acc[2] += part.position[2];
+        return acc;
+      },
+      [0, 0, 0] as [number, number, number]
+    );
+
+    return [sum[0] / parts.length, sum[1] / parts.length, sum[2] / parts.length];
+  }, [parts]);
 
   const handleMissed = () => {
     selectPart(null);
@@ -48,8 +63,14 @@ export const Scene: React.FC = () => {
           </mesh>
         )}
 
-        {parts.map((part) => (
-          <PartObject key={part.id} data={part} />
+        {parts.map((part, index) => (
+          <PartObject
+            key={part.id}
+            data={part}
+            partIndex={index}
+            totalParts={parts.length}
+            assemblyCenter={assemblyCenter}
+          />
         ))}
 
         <OrbitControls makeDefault />

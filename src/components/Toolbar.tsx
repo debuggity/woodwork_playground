@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp } from 'lucide-react';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -23,11 +23,14 @@ export const Toolbar: React.FC = () => {
     setParts,
     floorEnabled,
     toggleFloor,
+    explodeFactor,
+    setExplodeFactor,
   } = useStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState('wood-project');
+  const [isStarkPanelMinimized, setIsStarkPanelMinimized] = useState(true);
 
   const handleDelete = () => {
     if (selectedId) {
@@ -208,6 +211,65 @@ export const Toolbar: React.FC = () => {
           accept=".json"
           className="hidden"
         />
+      </div>
+
+      <div className="absolute bottom-3 right-3 z-20">
+        {isStarkPanelMinimized ? (
+          <button
+            onClick={() => setIsStarkPanelMinimized(false)}
+            className="h-14 w-14 rounded-xl border border-cyan-300/50 bg-slate-950/85 shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-md text-cyan-100 hover:text-white hover:border-cyan-200/70 transition-colors flex items-center justify-center"
+            title="Open Tony Stark Slider"
+          >
+            <div className="text-center leading-none">
+              <div className="text-[10px] font-bold tracking-wide">TS</div>
+              <ChevronUp size={14} className="mx-auto mt-0.5" />
+            </div>
+          </button>
+        ) : (
+          <div className="w-[min(24rem,calc(100vw-1rem))] rounded-xl border border-cyan-300/50 bg-slate-950/80 shadow-[0_0_40px_rgba(34,211,238,0.22)] backdrop-blur-md p-3">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-cyan-300">
+              <span>Stark Assembly Matrix</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-cyan-100">{explodeFactor.toFixed(2)}</span>
+                <button
+                  onClick={() => setIsStarkPanelMinimized(true)}
+                  className="p-1 rounded text-cyan-200 hover:text-white hover:bg-cyan-500/15 transition-colors"
+                  title="Minimize Tony Stark Slider"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+            </div>
+            <div className="mt-1 text-sm font-semibold text-cyan-50">
+              Tony Stark Slider
+            </div>
+            <div className="mt-2 px-1">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={explodeFactor}
+                onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+                className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400"
+                aria-label="Tony Stark explosion slider"
+              />
+              <div className="mt-1 flex justify-between text-[10px] font-mono text-cyan-200/90">
+                <span>0.00 NORMAL</span>
+                <span>1.00 FULL EXPLODE</span>
+              </div>
+            </div>
+            <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-300 via-sky-400 to-blue-500 transition-[width] duration-150"
+                style={{ width: `${explodeFactor * 100}%` }}
+              />
+            </div>
+            <div className="mt-2 text-[11px] text-cyan-100/80">
+              Deconstruct and reassemble like you own a billion-dollar workshop.
+            </div>
+          </div>
+        )}
       </div>
 
       {isExportModalOpen && (

@@ -7,6 +7,9 @@ import { CutCorner, PartData } from '../types';
 
 interface PartObjectProps {
   data: PartData;
+  partIndex: number;
+  totalParts: number;
+  assemblyCenter: [number, number, number];
 }
 
 const SELECTION_SUPPRESS_MS = 180;
@@ -81,14 +84,25 @@ const clampCut = (value: number, maxValue: number) => {
   return Math.max(minValue, Math.min(value, maxCut));
 };
 
-export const PartObject: React.FC<PartObjectProps> = React.memo(({ data }) => {
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partIndex, totalParts, assemblyCenter }) => {
   const isSelected = useStore((state) => state.selectedId === data.id);
   const isHoveredInSceneList = useStore((state) => state.hoveredId === data.id);
   const tool = useStore((state) => state.tool);
   const snapEnabled = useStore((state) => state.snapEnabled);
+  const explodeFactor = useStore((state) => state.explodeFactor);
   const selectPart = useStore((state) => state.selectPart);
   const updatePart = useStore((state) => state.updatePart);
 
+  const explodeGroupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const transformStartRef = useRef<{ position: THREE.Vector3; rotation: THREE.Euler } | null>(null);
@@ -124,6 +138,42 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data }) => {
   const position = useMemo(() => new THREE.Vector3(...data.position), [data.position]);
   const rotation = useMemo(() => new THREE.Euler(...data.rotation), [data.rotation]);
   const [width, height, depth] = data.dimensions;
+  const explodeMotion = useMemo(() => {
+    const idHash = hashString(data.id);
+    const direction = new THREE.Vector3(
+      data.position[0] - assemblyCenter[0],
+      0,
+      data.position[2] - assemblyCenter[2]
+    );
+
+    if (direction.lengthSq() < 0.0001) {
+      const theta = ((idHash % 360) * Math.PI) / 180;
+      direction.set(Math.cos(theta), 0, Math.sin(theta));
+    }
+    direction.normalize();
+
+    const radialDistance = Math.hypot(
+      data.position[0] - assemblyCenter[0],
+      data.position[2] - assemblyCenter[2]
+    );
+
+    const axis = new THREE.Vector3(
+      ((idHash % 17) - 8) / 8,
+      (((idHash >> 3) % 19) - 9) / 9,
+      (((idHash >> 6) % 23) - 11) / 11
+    );
+    if (axis.lengthSq() < 0.01) {
+      axis.set(0.3, 1, 0.2);
+    }
+    axis.normalize();
+
+    const spread = 18 + radialDistance * 0.42 + ((partIndex + totalParts) % 6) * 1.6;
+    const lift = 8 + (idHash % 7) * 0.85;
+    const spin = (1.15 + ((idHash % 9) * 0.17)) * Math.PI;
+    const phase = (idHash % 300) / 50;
+
+    return { direction, axis, spread, lift, spin, phase };
+  }, [assemblyCenter, data.id, data.position, partIndex, totalParts]);
 
   const geometry = useMemo<THREE.BufferGeometry>(() => {
     if (data.type === 'hardware') {
@@ -186,7 +236,26 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data }) => {
     };
   }, [edgeGeometry]);
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
+    const explodeGroup = explodeGroupRef.current;
+    if (explodeGroup) {
+      const pulse = Math.sin(clock.elapsedTime * 3.2 + explodeMotion.phase) * explodeFactor * 0.35;
+      const targetX = explodeMotion.direction.x * explodeMotion.spread * explodeFactor;
+      const targetY = (explodeMotion.lift + pulse) * explodeFactor;
+      const targetZ = explodeMotion.direction.z * explodeMotion.spread * explodeFactor;
+
+      explodeGroup.position.x = THREE.MathUtils.damp(explodeGroup.position.x, targetX, 8, delta);
+      explodeGroup.position.y = THREE.MathUtils.damp(explodeGroup.position.y, targetY, 8, delta);
+      explodeGroup.position.z = THREE.MathUtils.damp(explodeGroup.position.z, targetZ, 8, delta);
+
+      const targetRotX = explodeMotion.axis.x * explodeMotion.spin * explodeFactor;
+      const targetRotY = explodeMotion.axis.y * explodeMotion.spin * explodeFactor;
+      const targetRotZ = explodeMotion.axis.z * explodeMotion.spin * explodeFactor;
+      explodeGroup.rotation.x = THREE.MathUtils.damp(explodeGroup.rotation.x, targetRotX, 6.5, delta);
+      explodeGroup.rotation.y = THREE.MathUtils.damp(explodeGroup.rotation.y, targetRotY, 6.5, delta);
+      explodeGroup.rotation.z = THREE.MathUtils.damp(explodeGroup.rotation.z, targetRotZ, 6.5, delta);
+    }
+
     const material = materialRef.current;
     if (!material) return;
 
@@ -235,7 +304,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data }) => {
     }
   };
 
-  const showTransform = isSelected && (tool === 'move' || tool === 'rotate');
+  const showTransform = explodeFactor < 0.001 && isSelected && (tool === 'move' || tool === 'rotate');
   const mode = tool === 'rotate' ? 'rotate' : 'translate';
   const fillColor = isHoveredInSceneList ? '#4ade80' : isSelected ? '#ff9f43' : (data.color || '#eecfa1');
   const strokeColor = isHoveredInSceneList ? '#22c55e' : isSelected ? '#ff6b6b' : '#8d6e63';
@@ -254,36 +323,45 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data }) => {
           rotationSnap={snapEnabled ? Math.PI / 8 : undefined}
         />
       )}
-      <mesh
-        ref={meshRef}
-        position={position}
-        rotation={rotation}
-        onClick={data.type === 'hardware' ? undefined : handleClick}
-        castShadow
-        receiveShadow
-      >
-        <primitive object={geometry} attach="geometry" />
-        <meshStandardMaterial
-          ref={materialRef}
-          color={fillColor}
-          roughness={data.type === 'hardware' ? 0.3 : 0.8}
-          metalness={data.type === 'hardware' ? 0.8 : 0.1}
-        />
-        {data.type === 'hardware' && (
-          <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
-            <cylinderGeometry args={[hardwareHitRadius, hardwareHitRadius, hardwareHitHeight, 20]} />
-            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-          </mesh>
-        )}
-        {data.type !== 'hardware' && edgeGeometry && (
-          <lineSegments>
-            <primitive object={edgeGeometry} attach="geometry" />
-            <lineBasicMaterial color={strokeColor} />
-          </lineSegments>
-        )}
-      </mesh>
+      <group ref={explodeGroupRef}>
+        <mesh
+          ref={meshRef}
+          position={position}
+          rotation={rotation}
+          onClick={data.type === 'hardware' ? undefined : handleClick}
+          castShadow
+          receiveShadow
+        >
+          <primitive object={geometry} attach="geometry" />
+          <meshStandardMaterial
+            ref={materialRef}
+            color={fillColor}
+            roughness={data.type === 'hardware' ? 0.3 : 0.8}
+            metalness={data.type === 'hardware' ? 0.8 : 0.1}
+          />
+          {data.type === 'hardware' && (
+            <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
+              <cylinderGeometry args={[hardwareHitRadius, hardwareHitRadius, hardwareHitHeight, 20]} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
+          )}
+          {data.type !== 'hardware' && edgeGeometry && (
+            <lineSegments>
+              <primitive object={edgeGeometry} attach="geometry" />
+              <lineBasicMaterial color={strokeColor} />
+            </lineSegments>
+          )}
+        </mesh>
+      </group>
     </>
   );
 }, (prevProps, nextProps) => {
-  return prevProps.data === nextProps.data;
+  return (
+    prevProps.data === nextProps.data
+    && prevProps.partIndex === nextProps.partIndex
+    && prevProps.totalParts === nextProps.totalParts
+    && prevProps.assemblyCenter[0] === nextProps.assemblyCenter[0]
+    && prevProps.assemblyCenter[1] === nextProps.assemblyCenter[1]
+    && prevProps.assemblyCenter[2] === nextProps.assemblyCenter[2]
+  );
 });
