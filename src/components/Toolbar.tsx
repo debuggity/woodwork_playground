@@ -1,10 +1,33 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useStore } from '../store';
 import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid } from 'lucide-react';
 
+const sanitizeFilename = (value: string) => {
+  const trimmed = value.trim();
+  const safe = trimmed.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-');
+  const normalized = safe || 'wood-design';
+  return normalized.endsWith('.json') ? normalized : `${normalized}.json`;
+};
+
 export const Toolbar: React.FC = () => {
-  const { tool, setTool, removePart, selectedId, resetScene, duplicatePart, snapEnabled, toggleSnap, parts, setParts, floorEnabled, toggleFloor } = useStore();
+  const {
+    tool,
+    setTool,
+    removePart,
+    selectedId,
+    resetScene,
+    duplicatePart,
+    snapEnabled,
+    toggleSnap,
+    parts,
+    setParts,
+    floorEnabled,
+    toggleFloor,
+  } = useStore();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportName, setExportName] = useState('wood-project');
 
   const handleDelete = () => {
     if (selectedId) {
@@ -24,15 +47,26 @@ export const Toolbar: React.FC = () => {
     }
   };
 
-  const handleExport = () => {
-    const data = JSON.stringify(parts, null, 2);
+  const handleOpenExport = () => {
+    setIsExportModalOpen(true);
+  };
+
+  const handleConfirmExport = () => {
+    const payload = {
+      projectName: exportName.trim() || 'wood-design',
+      exportedAt: new Date().toISOString(),
+      parts,
+    };
+
+    const data = JSON.stringify(payload, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'wood-design.json';
+    a.download = sanitizeFilename(exportName);
     a.click();
     URL.revokeObjectURL(url);
+    setIsExportModalOpen(false);
   };
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -42,11 +76,16 @@ export const Toolbar: React.FC = () => {
       reader.onload = (e) => {
         try {
           const content = e.target?.result as string;
-          const importedParts = JSON.parse(content);
+          const parsed = JSON.parse(content);
+          const importedParts = Array.isArray(parsed) ? parsed : parsed?.parts;
+
           if (Array.isArray(importedParts)) {
             setParts(importedParts);
+            if (typeof parsed?.projectName === 'string' && parsed.projectName.trim()) {
+              setExportName(parsed.projectName.trim());
+            }
           } else {
-            alert('Invalid file format: content is not an array of parts');
+            alert('Invalid file format: expected parts array');
           }
         } catch (error) {
           console.error('Failed to parse file', error);
@@ -55,7 +94,6 @@ export const Toolbar: React.FC = () => {
       };
       reader.readAsText(file);
     }
-    // Reset input value to allow re-selecting the same file
     event.target.value = '';
   };
 
@@ -66,109 +104,154 @@ export const Toolbar: React.FC = () => {
   ] as const;
 
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white rounded-lg shadow-lg p-2 flex items-center space-x-2 z-10">
-      {tools.map((t) => (
+    <>
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-2 flex flex-wrap items-center justify-center gap-1 sm:gap-2 z-20 max-w-[calc(100%-1rem)]">
+        {tools.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTool(t.id)}
+            className={`p-2 rounded-md transition-colors ${
+              tool === t.id
+                ? 'bg-blue-100 text-blue-600'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+            title={t.label}
+          >
+            <t.icon size={20} />
+          </button>
+        ))}
+
+        <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
+
         <button
-          key={t.id}
-          onClick={() => setTool(t.id)}
+          onClick={handleDelete}
+          disabled={!selectedId}
           className={`p-2 rounded-md transition-colors ${
-            tool === t.id
+            !selectedId
+              ? 'text-slate-300 cursor-not-allowed'
+              : 'text-red-600 hover:bg-red-50'
+          }`}
+          title="Delete Selected"
+        >
+          <Trash2 size={20} />
+        </button>
+
+        <button
+          onClick={handleDuplicate}
+          disabled={!selectedId}
+          className={`p-2 rounded-md transition-colors ${
+            !selectedId
+              ? 'text-slate-300 cursor-not-allowed'
+              : 'text-blue-600 hover:bg-blue-50'
+          }`}
+          title="Duplicate Selected"
+        >
+          <Copy size={20} />
+        </button>
+
+        <button
+          onClick={handleReset}
+          className="p-2 rounded-md text-red-600 hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
+          title="Reset Scene"
+        >
+          <RotateCcw size={20} />
+        </button>
+
+        <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
+
+        <button
+          onClick={toggleSnap}
+          className={`p-2 rounded-md transition-colors ${
+            snapEnabled
               ? 'bg-blue-100 text-blue-600'
               : 'text-slate-600 hover:bg-slate-100'
           }`}
-          title={t.label}
+          title={snapEnabled ? 'Snapping On' : 'Snapping Off'}
         >
-          <t.icon size={20} />
+          <Magnet size={20} />
         </button>
-      ))}
-      
-      <div className="w-px h-6 bg-slate-200 mx-2" />
 
-      <button
-        onClick={handleDelete}
-        disabled={!selectedId}
-        className={`p-2 rounded-md transition-colors ${
-          !selectedId
-            ? 'text-slate-300 cursor-not-allowed'
-            : 'text-red-600 hover:bg-red-50'
-        }`}
-        title="Delete Selected"
-      >
-        <Trash2 size={20} />
-      </button>
+        <button
+          onClick={toggleFloor}
+          className={`p-2 rounded-md transition-colors ${
+            floorEnabled
+              ? 'bg-blue-100 text-blue-600'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+          title={floorEnabled ? 'Floor On' : 'Floor Off'}
+        >
+          <Grid size={20} />
+        </button>
 
-      <button
-        onClick={handleDuplicate}
-        disabled={!selectedId}
-        className={`p-2 rounded-md transition-colors ${
-          !selectedId
-            ? 'text-slate-300 cursor-not-allowed'
-            : 'text-blue-600 hover:bg-blue-50'
-        }`}
-        title="Duplicate Selected"
-      >
-        <Copy size={20} />
-      </button>
+        <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
-      <button
-        onClick={handleReset}
-        className="p-2 rounded-md text-red-600 hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
-        title="Reset Scene"
-      >
-        <RotateCcw size={20} />
-      </button>
+        <button
+          onClick={handleOpenExport}
+          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+          title="Save Design"
+        >
+          <Download size={20} />
+        </button>
 
-      <div className="w-px h-6 bg-slate-200 mx-2" />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+          title="Load Design"
+        >
+          <Upload size={20} />
+        </button>
 
-      <button
-        onClick={toggleSnap}
-        className={`p-2 rounded-md transition-colors ${
-          snapEnabled
-            ? 'bg-blue-100 text-blue-600'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-        title={snapEnabled ? "Snapping On" : "Snapping Off"}
-      >
-        <Magnet size={20} />
-      </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleImport}
+          accept=".json"
+          className="hidden"
+        />
+      </div>
 
-      <button
-        onClick={toggleFloor}
-        className={`p-2 rounded-md transition-colors ${
-          floorEnabled
-            ? 'bg-blue-100 text-blue-600'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-        title={floorEnabled ? "Floor On" : "Floor Off"}
-      >
-        <Grid size={20} />
-      </button>
-
-      <div className="w-px h-6 bg-slate-200 mx-2" />
-
-      <button
-        onClick={handleExport}
-        className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
-        title="Save Design"
-      >
-        <Download size={20} />
-      </button>
-
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
-        title="Load Design"
-      >
-        <Upload size={20} />
-      </button>
-
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleImport}
-        accept=".json"
-        className="hidden"
-      />
-    </div>
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-200">
+              <h3 className="text-lg font-semibold text-slate-800">Export Project</h3>
+              <p className="text-sm text-slate-500 mt-1">Choose a project name for the exported filename.</p>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Project Name</label>
+              <input
+                autoFocus
+                value={exportName}
+                onChange={(e) => setExportName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleConfirmExport();
+                  }
+                }}
+                placeholder="My workshop plan"
+                className="w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              <div className="text-xs text-slate-500">
+                File: <span className="font-mono">{sanitizeFilename(exportName)}</span>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                onClick={() => setIsExportModalOpen(false)}
+                className="px-3 py-1.5 text-sm rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmExport}
+                className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

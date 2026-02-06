@@ -5,12 +5,14 @@ import { PartData, ToolType } from './types';
 interface AppState {
   parts: PartData[];
   selectedId: string | null;
+  hoveredId: string | null;
   tool: ToolType;
   
   addPart: (part: PartData) => void;
   updatePart: (id: string, updates: Partial<PartData>) => void;
   removePart: (id: string) => void;
   selectPart: (id: string | null) => void;
+  setHoveredId: (id: string | null) => void;
   duplicatePart: (id: string) => void;
   setTool: (tool: ToolType) => void;
   resetScene: () => void;
@@ -24,6 +26,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   parts: [],
   selectedId: null,
+  hoveredId: null,
   tool: 'select',
   snapEnabled: true, // Default to true for easier alignment
   floorEnabled: false,
@@ -40,9 +43,12 @@ export const useStore = create<AppState>((set) => ({
   removePart: (id) => set((state) => ({
     parts: state.parts.filter((p) => p.id !== id),
     selectedId: state.selectedId === id ? null : state.selectedId,
+    hoveredId: state.hoveredId === id ? null : state.hoveredId,
   })),
 
   selectPart: (id) => set({ selectedId: id }),
+
+  setHoveredId: (id) => set({ hoveredId: id }),
 
   duplicatePart: (id) => set((state) => {
     const partToDuplicate = state.parts.find((p) => p.id === id);
@@ -66,9 +72,9 @@ export const useStore = create<AppState>((set) => ({
 
   setTool: (tool) => set({ tool }),
 
-  resetScene: () => set({ parts: [], selectedId: null }),
+  resetScene: () => set({ parts: [], selectedId: null, hoveredId: null }),
 
-  setParts: (parts) => set({ parts, selectedId: null }),
+  setParts: (parts) => set({ parts, selectedId: null, hoveredId: null }),
 
   toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
 

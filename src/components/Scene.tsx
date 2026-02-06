@@ -5,10 +5,11 @@ import { useStore } from '../store';
 import { PartObject } from './PartObject';
 
 export const Scene: React.FC = () => {
-  const { parts, selectPart, floorEnabled } = useStore();
+  const { parts, selectPart, setHoveredId, floorEnabled } = useStore();
 
   const handleMissed = () => {
     selectPart(null);
+    setHoveredId(null);
   };
 
   return (
