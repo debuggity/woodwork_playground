@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 import { ThreeEvent, useFrame } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -106,6 +106,8 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
   const meshRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const transformStartRef = useRef<{ position: THREE.Vector3; rotation: THREE.Euler } | null>(null);
+  const isTransformingRef = useRef(false);
+  const transformSyncRafRef = useRef<number | null>(null);
 
   const shouldIgnoreSelection = (button?: number) => {
     if (button !== undefined && button !== 0) {
@@ -269,40 +271,65 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     material.emissiveIntensity = 0;
   });
 
+  const syncTransformToStore = useCallback(() => {
+    if (!meshRef.current) return;
+    const newPos = meshRef.current.position;
+    const newRot = meshRef.current.rotation;
+    updatePart(data.id, {
+      position: [newPos.x, newPos.y, newPos.z],
+      rotation: [newRot.x, newRot.y, newRot.z],
+    });
+  }, [data.id, updatePart]);
+
+  const scheduleTransformSync = useCallback(() => {
+    if (transformSyncRafRef.current !== null) return;
+    transformSyncRafRef.current = window.requestAnimationFrame(() => {
+      transformSyncRafRef.current = null;
+      syncTransformToStore();
+    });
+  }, [syncTransformToStore]);
+
   const onTransformStart = () => {
     if (!meshRef.current) return;
 
+    isTransformingRef.current = true;
     transformStartRef.current = {
       position: meshRef.current.position.clone(),
       rotation: meshRef.current.rotation.clone(),
     };
   };
 
-  const onTransformEnd = () => {
-    if (meshRef.current) {
-      const newPos = meshRef.current.position;
-      const newRot = meshRef.current.rotation;
-      const start = transformStartRef.current;
-
-      if (start) {
-        const moved = newPos.distanceTo(start.position) > 0.0001;
-        const rotated =
-          Math.abs(newRot.x - start.rotation.x) > 0.0001 ||
-          Math.abs(newRot.y - start.rotation.y) > 0.0001 ||
-          Math.abs(newRot.z - start.rotation.z) > 0.0001;
-
-        if (moved || rotated) {
-          suppressSelectionUntil = Date.now() + SELECTION_SUPPRESS_MS;
-        }
-      }
-      transformStartRef.current = null;
-
-      updatePart(data.id, {
-        position: [newPos.x, newPos.y, newPos.z],
-        rotation: [newRot.x, newRot.y, newRot.z],
-      });
-    }
+  const onTransformObjectChange = () => {
+    if (!isTransformingRef.current) return;
+    scheduleTransformSync();
   };
+
+  const onTransformEnd = useCallback(() => {
+    isTransformingRef.current = false;
+    if (!meshRef.current) {
+      transformStartRef.current = null;
+      return;
+    }
+
+    const newPos = meshRef.current.position;
+    const newRot = meshRef.current.rotation;
+    const start = transformStartRef.current;
+
+    if (start) {
+      const moved = newPos.distanceTo(start.position) > 0.0001;
+      const rotated =
+        Math.abs(newRot.x - start.rotation.x) > 0.0001 ||
+        Math.abs(newRot.y - start.rotation.y) > 0.0001 ||
+        Math.abs(newRot.z - start.rotation.z) > 0.0001;
+
+      if (moved || rotated) {
+        suppressSelectionUntil = Date.now() + SELECTION_SUPPRESS_MS;
+      }
+    }
+    transformStartRef.current = null;
+
+    syncTransformToStore();
+  }, [syncTransformToStore]);
 
   const showTransform = explodeFactor < 0.001 && isSelected && (tool === 'move' || tool === 'rotate');
   const mode = tool === 'rotate' ? 'rotate' : 'translate';
@@ -310,6 +337,38 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
   const strokeColor = isHoveredInSceneList ? '#22c55e' : isSelected ? '#ff6b6b' : '#8d6e63';
   const hardwareHitRadius = Math.max(width * 3, 0.45);
   const hardwareHitHeight = Math.max(height + 0.75, 2.5);
+
+  useEffect(() => {
+    if (!showTransform) {
+      isTransformingRef.current = false;
+      transformStartRef.current = null;
+    }
+  }, [showTransform]);
+
+  useEffect(() => {
+    if (!showTransform) return;
+
+    const finishTransform = () => {
+      if (!isTransformingRef.current) return;
+      onTransformEnd();
+    };
+
+    window.addEventListener('pointerup', finishTransform, { passive: true });
+    window.addEventListener('pointercancel', finishTransform, { passive: true });
+    return () => {
+      window.removeEventListener('pointerup', finishTransform);
+      window.removeEventListener('pointercancel', finishTransform);
+    };
+  }, [onTransformEnd, showTransform]);
+
+  useEffect(() => {
+    return () => {
+      if (transformSyncRafRef.current !== null) {
+        window.cancelAnimationFrame(transformSyncRafRef.current);
+        transformSyncRafRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <>
@@ -319,6 +378,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
           mode={mode}
           onMouseDown={onTransformStart}
           onMouseUp={onTransformEnd}
+          onObjectChange={onTransformObjectChange}
           translationSnap={snapEnabled ? 0.125 : undefined}
           rotationSnap={snapEnabled ? Math.PI / 8 : undefined}
         />

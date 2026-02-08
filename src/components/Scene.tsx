@@ -6,6 +6,15 @@ import { PartObject } from './PartObject';
 
 export const Scene: React.FC = () => {
   const { parts, selectPart, setHoveredId, floorEnabled } = useStore();
+  const blurActiveInput = () => {
+    const activeElement = document.activeElement as HTMLElement | null;
+    if (!activeElement) return;
+    const tag = activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      activeElement.blur();
+    }
+  };
+
   const assemblyCenter = useMemo<[number, number, number]>(() => {
     if (parts.length === 0) return [0, 0, 0];
 
@@ -28,11 +37,13 @@ export const Scene: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full bg-slate-100">
+    <div className="w-full h-full bg-slate-100 touch-none" onPointerDownCapture={blurActiveInput}>
       <Canvas
         shadows
         camera={{ position: [50, 50, 50], fov: 45 }}
         onPointerMissed={handleMissed}
+        eventPrefix="client"
+        style={{ touchAction: 'none' }}
       >
         <ambientLight intensity={0.5} />
         <directionalLight

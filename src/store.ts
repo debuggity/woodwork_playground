@@ -14,7 +14,7 @@ interface AppState {
   removePart: (id: string) => void;
   selectPart: (id: string | null) => void;
   setHoveredId: (id: string | null) => void;
-  duplicatePart: (id: string) => void;
+  duplicatePart: (id: string, options?: { selectDuplicate?: boolean }) => void;
   setTool: (tool: ToolType) => void;
   resetScene: () => void;
   setParts: (parts: PartData[]) => void;
@@ -53,10 +53,11 @@ export const useStore = create<AppState>((set) => ({
 
   setHoveredId: (id) => set({ hoveredId: id }),
 
-  duplicatePart: (id) => set((state) => {
+  duplicatePart: (id, options) => set((state) => {
     const partToDuplicate = state.parts.find((p) => p.id === id);
     if (!partToDuplicate) return {};
 
+    const shouldSelectDuplicate = options?.selectDuplicate ?? true;
     const newPart: PartData = {
       ...partToDuplicate,
       id: uuidv4(),
@@ -69,7 +70,7 @@ export const useStore = create<AppState>((set) => ({
 
     return {
       parts: [...state.parts, newPart],
-      selectedId: newPart.id,
+      selectedId: shouldSelectDuplicate ? newPart.id : state.selectedId,
     };
   }),
 

@@ -10,7 +10,7 @@ export function App() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   return (
-    <div className="h-screen w-screen bg-slate-100 overflow-hidden">
+    <div className="h-dvh w-screen bg-slate-100 overflow-hidden overscroll-none">
       <div className="flex h-full w-full">
         <div className="hidden lg:block lg:w-[clamp(15rem,24vw,20rem)] lg:min-w-[15rem] lg:max-w-[20rem] shrink-0 h-full min-h-0">
           <Sidebar />

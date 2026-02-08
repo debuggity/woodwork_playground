@@ -39,9 +39,8 @@ export const Toolbar: React.FC = () => {
   };
 
   const handleDuplicate = () => {
-    if (selectedId) {
-      duplicatePart(selectedId);
-    }
+    if (!selectedId) return;
+    duplicatePart(selectedId, { selectDuplicate: tool === 'select' });
   };
 
   const handleReset = () => {
@@ -213,7 +212,13 @@ export const Toolbar: React.FC = () => {
         />
       </div>
 
-      <div className="absolute bottom-3 right-3 z-20">
+      <div
+        className="fixed z-20"
+        style={{
+          right: 'calc(env(safe-area-inset-right, 0px) + 0.75rem)',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
+        }}
+      >
         {isStarkPanelMinimized ? (
           <button
             onClick={() => setIsStarkPanelMinimized(false)}
