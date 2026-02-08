@@ -1,8 +1,51 @@
-import React, { useMemo } from 'react';
-import { Canvas } from '@react-three/fiber';
+import React, { useEffect, useMemo } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
 import { useStore } from '../store';
 import { PartObject } from './PartObject';
+
+const ControlsRecovery: React.FC = () => {
+  const controls = useThree((state) => state.controls as { enabled?: boolean } | undefined);
+  const gl = useThree((state) => state.gl);
+
+  useEffect(() => {
+    const recoverControls = () => {
+      if (!controls) return;
+      if (controls.enabled === false) {
+        controls.enabled = true;
+      }
+    };
+
+    const preventContextMenu = (event: Event) => {
+      event.preventDefault();
+      recoverControls();
+    };
+
+    const domElement = gl.domElement;
+    domElement.addEventListener('contextmenu', preventContextMenu);
+    domElement.addEventListener('pointercancel', recoverControls, { passive: true });
+    domElement.addEventListener('touchcancel', recoverControls, { passive: true });
+    domElement.addEventListener('lostpointercapture', recoverControls, { passive: true });
+
+    window.addEventListener('pointercancel', recoverControls, { passive: true });
+    window.addEventListener('touchcancel', recoverControls, { passive: true });
+    window.addEventListener('blur', recoverControls);
+    document.addEventListener('visibilitychange', recoverControls);
+
+    return () => {
+      domElement.removeEventListener('contextmenu', preventContextMenu);
+      domElement.removeEventListener('pointercancel', recoverControls);
+      domElement.removeEventListener('touchcancel', recoverControls);
+      domElement.removeEventListener('lostpointercapture', recoverControls);
+      window.removeEventListener('pointercancel', recoverControls);
+      window.removeEventListener('touchcancel', recoverControls);
+      window.removeEventListener('blur', recoverControls);
+      document.removeEventListener('visibilitychange', recoverControls);
+    };
+  }, [controls, gl]);
+
+  return null;
+};
 
 export const Scene: React.FC = () => {
   const { parts, selectPart, setHoveredId, floorEnabled } = useStore();
@@ -37,14 +80,19 @@ export const Scene: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full bg-slate-100 touch-none" onPointerDownCapture={blurActiveInput}>
+    <div
+      className="w-full h-full bg-slate-100 touch-none select-none"
+      onPointerDownCapture={blurActiveInput}
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <Canvas
         shadows
         camera={{ position: [50, 50, 50], fov: 45 }}
         onPointerMissed={handleMissed}
         eventPrefix="client"
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
       >
+        <ControlsRecovery />
         <ambientLight intensity={0.5} />
         <directionalLight
           position={[50, 50, 25]}
