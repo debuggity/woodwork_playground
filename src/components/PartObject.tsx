@@ -84,6 +84,87 @@ const clampCut = (value: number, maxValue: number) => {
   return Math.max(minValue, Math.min(value, maxCut));
 };
 
+const clampMiterAngle = (degrees: number) => Math.max(-80, Math.min(80, degrees));
+
+const createAngledPrismGeometry = (
+  width: number,
+  height: number,
+  depth: number,
+  startAngleDeg: number,
+  endAngleDeg: number
+) => {
+  const halfW = width / 2;
+  const halfH = height / 2;
+  const halfD = depth / 2;
+
+  const startSlope = Math.tan(THREE.MathUtils.degToRad(clampMiterAngle(startAngleDeg)));
+  const endSlope = Math.tan(THREE.MathUtils.degToRad(clampMiterAngle(endAngleDeg)));
+
+  const backTopZ = -halfD + halfH * startSlope;
+  const backBottomZ = -halfD - halfH * startSlope;
+  const frontTopZ = halfD + halfH * endSlope;
+  const frontBottomZ = halfD - halfH * endSlope;
+
+  const vertices = new Float32Array([
+    -halfW, -halfH, backBottomZ,  // 0 back-bottom-left
+     halfW, -halfH, backBottomZ,  // 1 back-bottom-right
+     halfW,  halfH, backTopZ,     // 2 back-top-right
+    -halfW,  halfH, backTopZ,     // 3 back-top-left
+    -halfW, -halfH, frontBottomZ, // 4 front-bottom-left
+     halfW, -halfH, frontBottomZ, // 5 front-bottom-right
+     halfW,  halfH, frontTopZ,    // 6 front-top-right
+    -halfW,  halfH, frontTopZ,    // 7 front-top-left
+  ]);
+
+  const indices = [
+    0, 2, 1, 0, 3, 2, // back
+    4, 5, 6, 4, 6, 7, // front
+    0, 4, 7, 0, 7, 3, // left
+    1, 2, 6, 1, 6, 5, // right
+    3, 7, 6, 3, 6, 2, // top
+    0, 1, 5, 0, 5, 4, // bottom
+  ];
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+};
+
+const createLBracketGeometry = (width: number, height: number, depth: number) => {
+  const arm = Math.max(Math.min(width, height) * 0.42, 0.18);
+  const halfW = width / 2;
+  const halfH = height / 2;
+
+  const shape = new THREE.Shape();
+  shape.moveTo(-halfW, -halfH);
+  shape.lineTo(halfW, -halfH);
+  shape.lineTo(halfW, -halfH + arm);
+  shape.lineTo(-halfW + arm, -halfH + arm);
+  shape.lineTo(-halfW + arm, halfH);
+  shape.lineTo(-halfW, halfH);
+  shape.closePath();
+
+  const extruded = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+    steps: 1,
+    curveSegments: 1,
+  });
+
+  extruded.translate(0, 0, -depth / 2);
+  return centerGeometry(extruded);
+};
+
+const createHandleGeometry = (width: number, depth: number) => {
+  const major = Math.max(width * 0.24, 0.22);
+  const tube = Math.max(depth * 0.22, 0.06);
+  const torus = new THREE.TorusGeometry(major, tube, 10, 24, Math.PI);
+  torus.rotateX(Math.PI / 2);
+  return torus;
+};
+
 const hashString = (value: string) => {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
@@ -179,7 +260,36 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
 
   const geometry = useMemo<THREE.BufferGeometry>(() => {
     if (data.type === 'hardware') {
+      if (data.hardwareKind === 'hinge') {
+        const pinOffset = data.hinge?.pinOffset ?? Math.max(width * 0.35, 0.2);
+        const direction = Math.sign(pinOffset || 1);
+        const leafWidth = Math.max(width * 0.48, 0.2);
+        const leafGap = Math.max(width * 0.08, 0.05);
+        const firstLeafCenter = pinOffset - direction * ((leafWidth + leafGap) / 2);
+        const hingeLeaf = new THREE.BoxGeometry(leafWidth, height, depth);
+        hingeLeaf.translate(firstLeafCenter, 0, 0);
+        return hingeLeaf;
+      }
+      if (data.hardwareKind === 'bracket') {
+        return createLBracketGeometry(width, height, depth);
+      }
+      if (data.hardwareKind === 'slide') {
+        return new THREE.BoxGeometry(width, height * 0.55, depth);
+      }
+      if (data.hardwareKind === 'handle') {
+        return createHandleGeometry(width, depth);
+      }
       return new THREE.CylinderGeometry(width / 2, width / 2, height, 16);
+    }
+
+    if (data.profile?.type === 'angled') {
+      return createAngledPrismGeometry(
+        width,
+        height,
+        depth,
+        data.profile.startAngle ?? 0,
+        data.profile.endAngle ?? 0
+      );
     }
 
     if (data.profile?.type === 'l-cut') {
@@ -333,7 +443,16 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
 
   const showTransform = explodeFactor < 0.001 && isSelected && (tool === 'move' || tool === 'rotate');
   const mode = tool === 'rotate' ? 'rotate' : 'translate';
-  const fillColor = isHoveredInSceneList ? '#4ade80' : isSelected ? '#ff9f43' : (data.color || '#eecfa1');
+  const hingePinOffset = data.hinge?.pinOffset ?? Math.max(width * 0.35, 0.2);
+  const hingeDirection = Math.sign(hingePinOffset || 1);
+  const hingeLeafWidth = Math.max(width * 0.48, 0.2);
+  const hingeLeafGap = Math.max(width * 0.08, 0.05);
+  const hingeSecondLeafCenter = hingePinOffset + hingeDirection * ((hingeLeafWidth + hingeLeafGap) / 2);
+  const hingePinRadius = Math.max(depth * 0.22, 0.05);
+  const hingeKnuckleRadius = hingePinRadius * 1.1;
+  const hingeKnuckleHeight = Math.max(height * 0.28, 0.18);
+  const defaultColor = data.hardwareKind === 'hinge' ? '#64748b' : (data.color || '#eecfa1');
+  const fillColor = isHoveredInSceneList ? '#4ade80' : isSelected ? '#ff9f43' : defaultColor;
   const strokeColor = isHoveredInSceneList ? '#22c55e' : isSelected ? '#ff6b6b' : '#8d6e63';
   const hardwareHitRadius = Math.max(width * 3, 0.45);
   const hardwareHitHeight = Math.max(height + 0.75, 2.5);
@@ -399,11 +518,42 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
             roughness={data.type === 'hardware' ? 0.3 : 0.8}
             metalness={data.type === 'hardware' ? 0.8 : 0.1}
           />
+          {data.hardwareKind === 'hinge' && (
+            <>
+              <mesh position={[hingeSecondLeafCenter, 0, 0]}>
+                <boxGeometry args={[hingeLeafWidth, height, depth]} />
+                <meshStandardMaterial color={fillColor} roughness={0.3} metalness={0.8} />
+              </mesh>
+              <mesh position={[hingePinOffset, 0, 0]}>
+                <cylinderGeometry args={[hingePinRadius, hingePinRadius, Math.max(height, 0.4), 14]} />
+                <meshStandardMaterial color="#94a3b8" roughness={0.2} metalness={0.9} />
+              </mesh>
+              <mesh position={[hingePinOffset, hingeKnuckleHeight, 0]}>
+                <cylinderGeometry args={[hingeKnuckleRadius, hingeKnuckleRadius, hingeKnuckleHeight, 12]} />
+                <meshStandardMaterial color="#6b7280" roughness={0.25} metalness={0.85} />
+              </mesh>
+              <mesh position={[hingePinOffset, 0, 0]}>
+                <cylinderGeometry args={[hingeKnuckleRadius, hingeKnuckleRadius, hingeKnuckleHeight, 12]} />
+                <meshStandardMaterial color="#4b5563" roughness={0.25} metalness={0.85} />
+              </mesh>
+              <mesh position={[hingePinOffset, -hingeKnuckleHeight, 0]}>
+                <cylinderGeometry args={[hingeKnuckleRadius, hingeKnuckleRadius, hingeKnuckleHeight, 12]} />
+                <meshStandardMaterial color="#6b7280" roughness={0.25} metalness={0.85} />
+              </mesh>
+            </>
+          )}
           {data.type === 'hardware' && (
-            <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
-              <cylinderGeometry args={[hardwareHitRadius, hardwareHitRadius, hardwareHitHeight, 20]} />
-              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-            </mesh>
+            data.hardwareKind === 'hinge' ? (
+              <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
+                <boxGeometry args={[Math.max(width + Math.abs(hingePinOffset) + 0.45, 1), Math.max(height + 0.4, 1.2), Math.max(depth + 0.45, 0.7)]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+            ) : (
+              <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
+                <cylinderGeometry args={[hardwareHitRadius, hardwareHitRadius, hardwareHitHeight, 20]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+            )
           )}
           {data.type !== 'hardware' && edgeGeometry && (
             <lineSegments>

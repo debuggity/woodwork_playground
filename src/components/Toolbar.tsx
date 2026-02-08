@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed } from 'lucide-react';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -17,12 +17,14 @@ export const Toolbar: React.FC = () => {
     selectedId,
     resetScene,
     duplicatePart,
+    setHingeAngle,
     snapEnabled,
     toggleSnap,
     parts,
     setParts,
     floorEnabled,
     toggleFloor,
+    requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
   } = useStore();
@@ -31,6 +33,25 @@ export const Toolbar: React.FC = () => {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState('wood-project');
   const [isStarkPanelMinimized, setIsStarkPanelMinimized] = useState(true);
+  const selectedPart = parts.find((part) => part.id === selectedId);
+  const selectedHinge = selectedPart?.hardwareKind === 'hinge' ? selectedPart : null;
+  const hingeRangeRad = (() => {
+    const defaultMin = (-110 * Math.PI) / 180;
+    const defaultMax = (110 * Math.PI) / 180;
+    if (!selectedHinge) return [defaultMin, defaultMax] as const;
+    const rawMin = selectedHinge.hinge?.minAngle;
+    const rawMax = selectedHinge.hinge?.maxAngle;
+    if (rawMin === undefined && rawMax === undefined) return [defaultMin, defaultMax] as const;
+    const min = Math.min(rawMin ?? defaultMin, rawMax ?? defaultMax);
+    const max = Math.max(rawMin ?? defaultMin, rawMax ?? defaultMax);
+    if (Math.abs(min) <= 0.0001 && Math.abs(max - Math.PI) <= 0.0001) {
+      return [defaultMin, defaultMax] as const;
+    }
+    return [min, max] as const;
+  })();
+  const hingeMinDeg = (hingeRangeRad[0] * 180) / Math.PI;
+  const hingeMaxDeg = (hingeRangeRad[1] * 180) / Math.PI;
+  const hingeAngleDeg = selectedHinge ? ((selectedHinge.hinge?.angle ?? 0) * 180) / Math.PI : 0;
 
   const handleDelete = () => {
     if (selectedId) {
@@ -185,6 +206,14 @@ export const Toolbar: React.FC = () => {
           <Grid size={20} />
         </button>
 
+        <button
+          onClick={requestCameraFocus}
+          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+          title="Auto Center Camera"
+        >
+          <LocateFixed size={20} />
+        </button>
+
         <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
         <button
@@ -276,6 +305,47 @@ export const Toolbar: React.FC = () => {
           </div>
         )}
       </div>
+
+      {selectedHinge && (
+        <div
+          className="fixed z-20 w-[min(21rem,calc(100vw-1.5rem))] rounded-xl border border-slate-300 bg-white/95 backdrop-blur shadow-xl p-3"
+          style={{
+            left: 'calc(env(safe-area-inset-left, 0px) + 0.75rem)',
+            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-slate-700">Hinge Quick Control</div>
+            <div className="text-xs font-mono text-slate-500">{hingeAngleDeg.toFixed(0)} deg</div>
+          </div>
+          <div className="mt-1 text-[11px] text-slate-500 truncate">{selectedHinge.name}</div>
+          <div className="mt-2 text-[10px] text-slate-500">Swing Angle (center = 0)</div>
+          <input
+            type="range"
+            min={hingeMinDeg}
+            max={hingeMaxDeg}
+            step={1}
+            value={hingeAngleDeg}
+            onChange={(e) => setHingeAngle(selectedHinge.id, (parseFloat(e.target.value) * Math.PI) / 180)}
+            className="mt-2 w-full"
+            aria-label="Hinge quick angle"
+          />
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setHingeAngle(selectedHinge.id, (hingeMinDeg * Math.PI) / 180)}
+              className="py-1.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100"
+            >
+              Min
+            </button>
+            <button
+              onClick={() => setHingeAngle(selectedHinge.id, (hingeMaxDeg * Math.PI) / 180)}
+              className="py-1.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100"
+            >
+              Max
+            </button>
+          </div>
+        </div>
+      )}
 
       {isExportModalOpen && (
         <div className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-4">

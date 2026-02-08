@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
+import * as THREE from 'three';
 import { useStore } from '../store';
+import { PartData } from '../types';
 import { PartObject } from './PartObject';
 
 const ControlsRecovery: React.FC = () => {
@@ -47,8 +49,54 @@ const ControlsRecovery: React.FC = () => {
   return null;
 };
 
+const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({ parts, focusToken }) => {
+  const controls = useThree((state) => state.controls as { target?: THREE.Vector3; update?: () => void } | undefined);
+  const camera = useThree((state) => state.camera as THREE.PerspectiveCamera);
+
+  useEffect(() => {
+    if (!controls || !controls.target || !controls.update) return;
+
+    const woodParts = parts.filter((part) => part.type !== 'hardware');
+    const focusParts = woodParts.length > 0 ? woodParts : parts;
+    if (focusParts.length === 0) return;
+
+    const bounds = new THREE.Box3();
+    focusParts.forEach((part) => {
+      const center = new THREE.Vector3(...part.position);
+      const halfSize = new THREE.Vector3(
+        part.dimensions[0] / 2,
+        part.dimensions[1] / 2,
+        part.dimensions[2] / 2
+      );
+      bounds.expandByPoint(center.clone().sub(halfSize));
+      bounds.expandByPoint(center.clone().add(halfSize));
+    });
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    bounds.getCenter(center);
+    bounds.getSize(size);
+
+    const targetRadius = Math.max(size.length() * 0.6, 18);
+    const currentDirection = camera.position.clone().sub(controls.target);
+    if (currentDirection.lengthSq() < 0.001) {
+      currentDirection.set(1, 0.7, 1);
+    }
+    currentDirection.normalize();
+
+    controls.target.copy(center);
+    camera.position.copy(center.clone().add(currentDirection.multiplyScalar(targetRadius)));
+    camera.near = 0.1;
+    camera.far = Math.max(camera.far, targetRadius * 24);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }, [camera, controls, focusToken]);
+
+  return null;
+};
+
 export const Scene: React.FC = () => {
-  const { parts, selectPart, setHoveredId, floorEnabled } = useStore();
+  const { parts, selectPart, setHoveredId, floorEnabled, cameraFocusRequest } = useStore();
   const blurActiveInput = () => {
     const activeElement = document.activeElement as HTMLElement | null;
     if (!activeElement) return;
@@ -93,6 +141,7 @@ export const Scene: React.FC = () => {
         style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
       >
         <ControlsRecovery />
+        <AutoCenterCamera parts={parts} focusToken={cameraFocusRequest} />
         <ambientLight intensity={0.5} />
         <directionalLight
           position={[50, 50, 25]}

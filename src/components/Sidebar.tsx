@@ -2,19 +2,39 @@ import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Vector3, Euler } from 'three';
 import { useStore } from '../store';
-import { CutCorner, PartData } from '../types';
+import { CutCorner, HardwareKind, PartData } from '../types';
 import { Plus, Ruler, Box, Move3d, RotateCw, ArrowDownToLine, Layers, Search, Settings2, Hammer, MousePointer2 } from 'lucide-react';
 import { clsx } from 'clsx';
 
-const COMMON_PARTS = [
-  { name: '2x4 Lumber', dimensions: [1.5, 3.5, 96], type: 'lumber', color: '#eecfa1' },
-  { name: '2x6 Lumber', dimensions: [1.5, 5.5, 96], type: 'lumber', color: '#eecfa1' },
-  { name: '4x4 Post', dimensions: [3.5, 3.5, 96], type: 'lumber', color: '#d4b483' },
-  { name: '1x4 Lumber', dimensions: [0.75, 3.5, 96], type: 'lumber', color: '#f5deb3' },
-  { name: 'Plywood 3/4"', dimensions: [48, 0.75, 96], type: 'sheet', color: '#dec49a' },
-  { name: 'Plywood 1/2"', dimensions: [48, 0.5, 96], type: 'sheet', color: '#dec49a' },
-  { name: 'Nail / Screw', dimensions: [0.1, 2.0, 0.1], type: 'hardware', color: '#a0a0a0' },
-] as const;
+type LibraryCategory = 'lumber' | 'sheet' | 'hardware';
+type PartTemplate = {
+  name: string;
+  dimensions: [number, number, number];
+  type: PartData['type'];
+  color: string;
+  category: LibraryCategory;
+  hardwareKind?: HardwareKind;
+};
+
+const COMMON_PARTS: PartTemplate[] = [
+  { name: '2x4 Lumber', dimensions: [1.5, 3.5, 96], type: 'lumber', category: 'lumber', color: '#eecfa1' },
+  { name: '2x2 Stud', dimensions: [1.5, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f0d6ac' },
+  { name: '2x6 Lumber', dimensions: [1.5, 5.5, 96], type: 'lumber', category: 'lumber', color: '#eecfa1' },
+  { name: '2x8 Lumber', dimensions: [1.5, 7.25, 96], type: 'lumber', category: 'lumber', color: '#e6c08d' },
+  { name: '4x4 Post', dimensions: [3.5, 3.5, 96], type: 'lumber', category: 'lumber', color: '#d4b483' },
+  { name: '1x2 Furring Strip', dimensions: [0.75, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f4d8b1' },
+  { name: '1x4 Lumber', dimensions: [0.75, 3.5, 96], type: 'lumber', category: 'lumber', color: '#f5deb3' },
+  { name: '1x6 Lumber', dimensions: [0.75, 5.5, 96], type: 'lumber', category: 'lumber', color: '#f2d39f' },
+  { name: 'Plywood 3/4"', dimensions: [48, 0.75, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 1/2"', dimensions: [48, 0.5, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'MDF 3/4"', dimensions: [49, 0.75, 97], type: 'sheet', category: 'sheet', color: '#d8c7a6' },
+  { name: 'Cabinet Hinge', dimensions: [1.25, 2.5, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'hinge', color: '#64748b' },
+  { name: 'Gate Hinge', dimensions: [1.75, 4.0, 0.14], type: 'hardware', category: 'hardware', hardwareKind: 'hinge', color: '#475569' },
+  { name: 'L-Bracket', dimensions: [1.5, 1.5, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'bracket', color: '#7c8aa0' },
+  { name: 'Drawer Slide', dimensions: [12, 1.8, 0.45], type: 'hardware', category: 'hardware', hardwareKind: 'slide', color: '#8b96a8' },
+  { name: 'Pull Handle', dimensions: [4, 1.0, 0.75], type: 'hardware', category: 'hardware', hardwareKind: 'handle', color: '#78869c' },
+  { name: 'Nail / Screw', dimensions: [0.12, 2.0, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'fastener', color: '#a0a0a0' },
+];
 
 const L_CUT_CORNERS: { value: CutCorner; label: string }[] = [
   { value: 'front-left', label: 'Front Left' },
@@ -23,11 +43,20 @@ const L_CUT_CORNERS: { value: CutCorner; label: string }[] = [
   { value: 'back-right', label: 'Back Right' },
 ];
 
+const LIBRARY_CATEGORY_META: { id: LibraryCategory | 'all'; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'lumber', label: 'Lumber' },
+  { id: 'sheet', label: 'Sheet Goods' },
+  { id: 'hardware', label: 'Hardware' },
+];
+
 const clampLCutValue = (value: number, maxValue: number) => {
   const minValue = Math.min(0.125, maxValue / 2);
   const safeMax = Math.max(minValue, maxValue - minValue);
   return Math.max(minValue, Math.min(value, safeMax));
 };
+
+const clampMiterAngle = (value: number) => Math.max(-80, Math.min(80, value));
 
 const FOOTPRINT_EPS = 0.01;
 const ROTATION_EPS = 0.001;
@@ -41,6 +70,35 @@ type RectFootprint = {
 };
 
 const approxEqual = (a: number, b: number, epsilon = FOOTPRINT_EPS) => Math.abs(a - b) <= epsilon;
+
+const isAxisAlignedOverlap = (a: PartData, b: PartData) => {
+  const halfA = [a.dimensions[0] / 2, a.dimensions[1] / 2, a.dimensions[2] / 2] as const;
+  const halfB = [b.dimensions[0] / 2, b.dimensions[1] / 2, b.dimensions[2] / 2] as const;
+
+  return (
+    Math.abs(a.position[0] - b.position[0]) <= halfA[0] + halfB[0]
+    && Math.abs(a.position[1] - b.position[1]) <= halfA[1] + halfB[1]
+    && Math.abs(a.position[2] - b.position[2]) <= halfA[2] + halfB[2]
+  );
+};
+
+const centerDistanceSquared = (a: PartData, b: PartData) => {
+  const dx = a.position[0] - b.position[0];
+  const dy = a.position[1] - b.position[1];
+  const dz = a.position[2] - b.position[2];
+  return dx * dx + dy * dy + dz * dz;
+};
+
+const pickBestHingeForPart = (part: PartData, hinges: PartData[]) => {
+  if (hinges.length === 0) return null;
+
+  const overlapping = hinges.filter((hinge) => isAxisAlignedOverlap(part, hinge));
+  const pool = overlapping.length > 0 ? overlapping : hinges;
+
+  return pool.reduce((best, candidate) =>
+    centerDistanceSquared(part, candidate) < centerDistanceSquared(part, best) ? candidate : best
+  );
+};
 
 const toRectFootprint = (part: PartData): RectFootprint => {
   const halfW = part.dimensions[0] / 2;
@@ -401,9 +459,23 @@ const analyzeCombinedFootprint = (rects: RectFootprint[]) => {
 };
 
 export const Sidebar: React.FC = () => {
-  const { addPart, parts, selectedId, updatePart, setTool, selectPart, setHoveredId, setParts } = useStore();
+  const {
+    addPart,
+    parts,
+    selectedId,
+    updatePart,
+    setTool,
+    selectPart,
+    setHoveredId,
+    setParts,
+    attachPartToHinge,
+    detachPartFromHinge,
+    setHingeAngle,
+  } = useStore();
   const selectedPart = parts.find((p) => p.id === selectedId);
+  const hingeParts = parts.filter((part) => part.hardwareKind === 'hinge');
   const [activeTab, setActiveTab] = useState<'library' | 'scene' | 'properties'>('library');
+  const [libraryCategory, setLibraryCategory] = useState<LibraryCategory | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
@@ -418,13 +490,14 @@ export const Sidebar: React.FC = () => {
     setCombineMessage(null);
   }, [selectedId]);
 
-  const handleAddPart = (partTemplate: typeof COMMON_PARTS[number]) => {
+  const handleAddPart = (partTemplate: PartTemplate) => {
     setTool('select');
 
     const newPart: PartData = {
       id: uuidv4(),
       name: partTemplate.name,
       type: partTemplate.type as PartData['type'],
+      hardwareKind: partTemplate.hardwareKind as HardwareKind | undefined,
       dimensions: [...partTemplate.dimensions] as [number, number, number],
       position: [0, partTemplate.dimensions[1] / 2, 0],
       rotation: [0, 0, 0],
@@ -434,6 +507,14 @@ export const Sidebar: React.FC = () => {
         : {
             type: 'rect',
           },
+      hinge: partTemplate.hardwareKind === 'hinge'
+        ? {
+          angle: 0,
+          minAngle: (-110 * Math.PI) / 180,
+          maxAngle: (110 * Math.PI) / 180,
+          pinOffset: Math.max(partTemplate.dimensions[0] * 0.35, 0.2),
+        }
+        : undefined,
     };
     addPart(newPart);
   };
@@ -507,11 +588,22 @@ export const Sidebar: React.FC = () => {
     updatePart(selectedPart.id, { rotation: newRotation });
   };
 
-  const updateProfileType = (profileType: 'rect' | 'l-cut') => {
+  const updateProfileType = (profileType: 'rect' | 'l-cut' | 'angled') => {
     if (!selectedPart || selectedPart.type === 'hardware') return;
 
     if (profileType === 'rect') {
       updatePart(selectedPart.id, { profile: { type: 'rect' } });
+      return;
+    }
+
+    if (profileType === 'angled') {
+      updatePart(selectedPart.id, {
+        profile: {
+          type: 'angled',
+          startAngle: selectedPart.profile?.type === 'angled' ? selectedPart.profile.startAngle ?? 0 : 30,
+          endAngle: selectedPart.profile?.type === 'angled' ? selectedPart.profile.endAngle ?? -30 : -30,
+        },
+      });
       return;
     }
 
@@ -521,6 +613,61 @@ export const Sidebar: React.FC = () => {
         cutWidth: clampLCutValue(selectedPart.dimensions[0] / 2, selectedPart.dimensions[0]),
         cutDepth: clampLCutValue(selectedPart.dimensions[2] / 2, selectedPart.dimensions[2]),
         corner: 'front-left',
+      },
+    });
+  };
+
+  const updateAngledMeasure = (field: 'startAngle' | 'endAngle', value: string) => {
+    if (!selectedPart || selectedPart.type !== 'lumber') return;
+    const numericValue = parseFloat(value);
+    if (Number.isNaN(numericValue)) return;
+
+    const clamped = clampMiterAngle(numericValue);
+    const currentStart = selectedPart.profile?.type === 'angled' ? (selectedPart.profile.startAngle ?? 0) : 0;
+    const currentEnd = selectedPart.profile?.type === 'angled' ? (selectedPart.profile.endAngle ?? 0) : 0;
+
+    updatePart(selectedPart.id, {
+      profile: {
+        type: 'angled',
+        startAngle: field === 'startAngle' ? clamped : currentStart,
+        endAngle: field === 'endAngle' ? clamped : currentEnd,
+      },
+    });
+  };
+
+  const attachCurrentPartToHinge = () => {
+    if (!selectedPart || selectedPart.hardwareKind === 'hinge') return;
+    const candidateHinges = hingeParts.filter((hinge) => hinge.id !== selectedPart.id);
+    const bestHinge = pickBestHingeForPart(selectedPart, candidateHinges);
+    if (!bestHinge) return;
+    attachPartToHinge(selectedPart.id, bestHinge.id);
+  };
+
+  const detachCurrentPartFromHinge = () => {
+    if (!selectedPart) return;
+    detachPartFromHinge(selectedPart.id);
+  };
+
+  const updateHingeMountSide = (side: 'left' | 'right') => {
+    if (!selectedPart || selectedPart.hardwareKind !== 'hinge') return;
+    const currentOffset = selectedPart.hinge?.pinOffset ?? Math.max(selectedPart.dimensions[0] * 0.35, 0.2);
+    const magnitude = Math.max(Math.abs(currentOffset), 0.2);
+    const pinOffset = side === 'right' ? magnitude : -magnitude;
+    const defaultMin = (-110 * Math.PI) / 180;
+    const defaultMax = (110 * Math.PI) / 180;
+    let minAngle = selectedPart.hinge?.minAngle ?? defaultMin;
+    let maxAngle = selectedPart.hinge?.maxAngle ?? defaultMax;
+    if (Math.abs(minAngle) <= 0.0001 && Math.abs(maxAngle - Math.PI) <= 0.0001) {
+      minAngle = defaultMin;
+      maxAngle = defaultMax;
+    }
+
+    updatePart(selectedPart.id, {
+      hinge: {
+        angle: selectedPart.hinge?.angle ?? 0,
+        minAngle,
+        maxAngle,
+        pinOffset,
       },
     });
   };
@@ -683,8 +830,49 @@ export const Sidebar: React.FC = () => {
     p.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const visibleLibraryParts = COMMON_PARTS.filter((part) => {
+    if (libraryCategory === 'all') return true;
+    return part.category === libraryCategory;
+  });
+
   const currentProfile = selectedPart?.profile ?? { type: 'rect' as const };
   const profileControlValue = currentProfile.type === 'polygon' ? 'rect' : currentProfile.type;
+  const attachedHinge = selectedPart?.attachment
+    ? parts.find((part) => part.id === selectedPart.attachment?.hingeId)
+    : null;
+  const nearestHingeCandidate = selectedPart && selectedPart.hardwareKind !== 'hinge'
+    ? pickBestHingeForPart(
+        selectedPart,
+        hingeParts.filter((hinge) => hinge.id !== selectedPart.id)
+      )
+    : null;
+  const attachedCountForSelectedHinge = selectedPart?.hardwareKind === 'hinge'
+    ? parts.filter((part) => part.attachment?.hingeId === selectedPart.id).length
+    : 0;
+  const hingeRangeRad = (() => {
+    const defaultMin = (-110 * Math.PI) / 180;
+    const defaultMax = (110 * Math.PI) / 180;
+    if (!selectedPart || selectedPart.hardwareKind !== 'hinge') return [defaultMin, defaultMax] as const;
+
+    const rawMin = selectedPart.hinge?.minAngle;
+    const rawMax = selectedPart.hinge?.maxAngle;
+    if (rawMin === undefined && rawMax === undefined) return [defaultMin, defaultMax] as const;
+
+    const min = Math.min(rawMin ?? defaultMin, rawMax ?? defaultMax);
+    const max = Math.max(rawMin ?? defaultMin, rawMax ?? defaultMax);
+    if (Math.abs(min) <= 0.0001 && Math.abs(max - Math.PI) <= 0.0001) {
+      return [defaultMin, defaultMax] as const;
+    }
+    return [min, max] as const;
+  })();
+  const hingeAngleDeg = selectedPart?.hardwareKind === 'hinge'
+    ? ((selectedPart.hinge?.angle ?? 0) * 180) / Math.PI
+    : 0;
+  const hingeMinDeg = (hingeRangeRad[0] * 180) / Math.PI;
+  const hingeMaxDeg = (hingeRangeRad[1] * 180) / Math.PI;
+  const hingeMountSide = selectedPart?.hardwareKind === 'hinge'
+    ? ((selectedPart.hinge?.pinOffset ?? Math.max(selectedPart.dimensions[0] * 0.35, 0.2)) >= 0 ? 'right' : 'left')
+    : 'right';
 
   return (
     <div className="w-full bg-white border-r border-slate-200 h-full min-h-0 flex flex-col z-10 overflow-hidden">
@@ -734,25 +922,48 @@ export const Sidebar: React.FC = () => {
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
             <div className="pb-2">
               <h2 className="font-semibold text-slate-800">Part Library</h2>
-              <p className="text-xs text-slate-500">Select a part to add to the scene</p>
+              <p className="text-xs text-slate-500">Select a category, then add a part.</p>
             </div>
-            {COMMON_PARTS.map((part) => (
-              <button
-                key={part.name}
-                onClick={() => handleAddPart(part)}
-                className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
-              >
-                <div>
-                  <div className="font-medium text-slate-700">{part.name}</div>
-                  <div className="text-xs text-slate-500">
-                    {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+            <div className="flex flex-wrap gap-2">
+              {LIBRARY_CATEGORY_META.map((category) => (
+                <button
+                  key={category.id}
+                  onClick={() => setLibraryCategory(category.id)}
+                  className={clsx(
+                    'px-2.5 py-1 text-xs rounded-full border transition-colors',
+                    libraryCategory === category.id
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:text-blue-600'
+                  )}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+
+            {visibleLibraryParts.length === 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                No parts in this category.
+              </div>
+            ) : (
+              visibleLibraryParts.map((part) => (
+                <button
+                  key={part.name}
+                  onClick={() => handleAddPart(part)}
+                  className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+                >
+                  <div>
+                    <div className="font-medium text-slate-700">{part.name}</div>
+                    <div className="text-xs text-slate-500">
+                      {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                    </div>
                   </div>
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 text-blue-500">
-                  <Plus size={20} />
-                </div>
-              </button>
-            ))}
+                  <div className="opacity-0 group-hover:opacity-100 text-blue-500">
+                    <Plus size={20} />
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         )}
 
@@ -868,16 +1079,19 @@ export const Sidebar: React.FC = () => {
                 <label className="text-xs font-semibold text-slate-600">Cut Profile</label>
                 <select
                   value={profileControlValue}
-                  onChange={(e) => updateProfileType(e.target.value as 'rect' | 'l-cut')}
+                  onChange={(e) => updateProfileType(e.target.value as 'rect' | 'l-cut' | 'angled')}
                   className="w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                 >
                   <option value="rect">Rectangle</option>
                   <option value="l-cut">L-Cut (2 straight cuts)</option>
+                  {selectedPart.type === 'lumber' && (
+                    <option value="angled">Angled Ends (miter style)</option>
+                  )}
                 </select>
 
                 {currentProfile.type === 'polygon' && (
                   <p className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-1">
-                    Custom merged shape. Choose Rectangle or L-cut to replace it with a simpler profile.
+                    Custom merged shape. Choose Rectangle, L-cut, or angled ends to replace it with a simpler profile.
                   </p>
                 )}
 
@@ -924,6 +1138,40 @@ export const Sidebar: React.FC = () => {
                     </p>
                   </>
                 )}
+
+                {currentProfile.type === 'angled' && selectedPart.type === 'lumber' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-500">Start End Angle</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min={-80}
+                          max={80}
+                          value={(currentProfile.startAngle ?? 0).toFixed(0)}
+                          onChange={(e) => updateAngledMeasure('startAngle', e.target.value)}
+                          className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500">End Angle</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min={-80}
+                          max={80}
+                          value={(currentProfile.endAngle ?? 0).toFixed(0)}
+                          onChange={(e) => updateAngledMeasure('endAngle', e.target.value)}
+                          className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-500">
+                      Positive tilts one direction, negative tilts the opposite. Great for braces and scissor-style legs.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
@@ -950,6 +1198,118 @@ export const Sidebar: React.FC = () => {
                     {combineMessage.text}
                   </p>
                 )}
+              </div>
+            )}
+
+            {selectedPart.hardwareKind === 'hinge' && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+                <label className="text-xs font-semibold text-slate-600">Hinge Setup</label>
+                <div>
+                  <span className="text-[10px] text-slate-500">Pin Side (where the barrel sits)</span>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => updateHingeMountSide('left')}
+                      className={clsx(
+                        'py-1.5 text-xs rounded border transition-colors',
+                        hingeMountSide === 'left'
+                          ? 'border-blue-600 bg-blue-600 text-white'
+                          : 'border-slate-300 bg-white hover:bg-slate-100'
+                      )}
+                    >
+                      Pin Left
+                    </button>
+                    <button
+                      onClick={() => updateHingeMountSide('right')}
+                      className={clsx(
+                        'py-1.5 text-xs rounded border transition-colors',
+                        hingeMountSide === 'right'
+                          ? 'border-blue-600 bg-blue-600 text-white'
+                          : 'border-slate-300 bg-white hover:bg-slate-100'
+                      )}
+                    >
+                      Pin Right
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Pick which edge has the hinge pin. This is the pivot edge in real life.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Swing Angle (center = 0)</span>
+                  <span className="font-mono text-slate-700">{hingeAngleDeg.toFixed(0)} deg</span>
+                </div>
+                <input
+                  type="range"
+                  min={hingeMinDeg}
+                  max={hingeMaxDeg}
+                  step={1}
+                  value={hingeAngleDeg}
+                  onChange={(e) => setHingeAngle(selectedPart.id, (parseFloat(e.target.value) * Math.PI) / 180)}
+                  className="w-full"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setHingeAngle(selectedPart.id, (hingeMinDeg * Math.PI) / 180)}
+                    className="py-1.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Min
+                  </button>
+                  <button
+                    onClick={() => setHingeAngle(selectedPart.id, (hingeMaxDeg * Math.PI) / 180)}
+                    className="py-1.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Max
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Attached parts: <span className="font-medium">{attachedCountForSelectedHinge}</span>
+                </p>
+              </div>
+            )}
+
+            {selectedPart.hardwareKind !== 'hinge' && hingeParts.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <label className="text-xs font-semibold text-slate-600">Hinge Attachment</label>
+                {attachedHinge ? (
+                  <p className="text-[11px] text-slate-600">
+                    Attached to <span className="font-semibold">{attachedHinge.name}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500">
+                    One tap attach: overlap wins, otherwise nearest hinge is chosen automatically.
+                  </p>
+                )}
+                {nearestHingeCandidate && (
+                  <p className="text-[11px] text-slate-500">
+                    Target hinge: <span className="font-medium text-slate-700">{nearestHingeCandidate.name}</span>
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={attachCurrentPartToHinge}
+                    disabled={!nearestHingeCandidate}
+                    className={clsx(
+                      'py-1.5 text-xs rounded border transition-colors',
+                      nearestHingeCandidate
+                        ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+                        : 'border-slate-300 bg-slate-100 text-slate-400 cursor-not-allowed'
+                    )}
+                  >
+                    Auto Attach
+                  </button>
+                  <button
+                    onClick={detachCurrentPartFromHinge}
+                    disabled={!selectedPart.attachment}
+                    className={clsx(
+                      'py-1.5 text-xs rounded border transition-colors',
+                      selectedPart.attachment
+                        ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                        : 'border-slate-300 bg-slate-100 text-slate-400 cursor-not-allowed'
+                    )}
+                  >
+                    Detach
+                  </button>
+                </div>
               </div>
             )}
 

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { PartData } from '../types';
-import { ClipboardList, ShoppingCart } from 'lucide-react';
+import { ClipboardList, ExternalLink, ShoppingCart } from 'lucide-react';
 
 const roundTo = (value: number) => value.toFixed(3);
 const CUT_PLAN_EPS = 0.0001;
@@ -170,6 +170,29 @@ const notchToInstruction = (notch: NotchRect, part: PartData) => {
   return `Remove ${formatInches(width)}" x ${formatInches(depth)}" at left ${formatInches(fromLeft)}", back ${formatInches(fromBack)}"`;
 };
 
+const homeDepotSearchUrl = (query: string) => `https://www.homedepot.com/s/${encodeURIComponent(query)}`;
+
+const homeDepotQueryForPart = (part: PartData) => {
+  if (part.hardwareKind === 'hinge') {
+    return `${part.name} heavy duty hinge`;
+  }
+  if (part.type === 'hardware') {
+    return `${part.name} hardware`;
+  }
+  if (part.type === 'sheet') {
+    return `${part.name} plywood sheet`;
+  }
+  return `${part.name} lumber board`;
+};
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
 const cutRecipe = (part: PartData): CutRecipe | null => {
   if (part.type === 'hardware' || !part.profile || part.profile.type === 'rect') {
     return null;
@@ -200,6 +223,18 @@ const cutRecipe = (part: PartData): CutRecipe | null => {
     };
   }
 
+  if (part.profile.type === 'angled') {
+    const startAngle = part.profile.startAngle ?? 0;
+    const endAngle = part.profile.endAngle ?? 0;
+    return {
+      summary: '2 angled end cuts',
+      steps: [
+        `Start end: set saw to ${formatInches(Math.abs(startAngle))} deg (${startAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
+        `End end: set saw to ${formatInches(Math.abs(endAngle))} deg (${endAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
+      ],
+    };
+  }
+
   return null;
 };
 
@@ -217,6 +252,14 @@ const profileSignature = (part: PartData) => {
       .map(([x, z]) => `${roundTo(x)},${roundTo(z)}`)
       .join(';');
     return ['polygon', serializedPoints].join('|');
+  }
+
+  if (part.profile.type === 'angled') {
+    return [
+      'angled',
+      roundTo(part.profile.startAngle ?? 0),
+      roundTo(part.profile.endAngle ?? 0),
+    ].join('|');
   }
 
   return [
@@ -243,6 +286,10 @@ const formatProfile = (part: PartData) => {
 
   if (part.profile.type === 'polygon') {
     return 'Custom merged profile';
+  }
+
+  if (part.profile.type === 'angled') {
+    return `Angled ends: start ${formatInches(part.profile.startAngle ?? 0)} deg, end ${formatInches(part.profile.endAngle ?? 0)} deg`;
   }
 
   const corner = (part.profile.corner ?? 'front-left').replace('-', ' ');
@@ -334,6 +381,84 @@ export const BOM: React.FC = () => {
 
     return Array.from(grouped.values());
   }, [parts]);
+
+  const homeDepotRows = useMemo(() => {
+    return Object.entries(shoppingList).map(([name, info]) => {
+      const part = parts.find((item) => item.name === name);
+      const query = homeDepotQueryForPart(part ?? {
+        id: '',
+        name,
+        type: 'hardware',
+        dimensions: [0, 0, 0],
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+      });
+
+      return {
+        name,
+        qty: info.count,
+        details: info.details,
+        query,
+        url: homeDepotSearchUrl(query),
+      };
+    });
+  }, [parts, shoppingList]);
+
+  const downloadHomeDepotReport = () => {
+    if (homeDepotRows.length === 0) return;
+
+    const rowsHtml = homeDepotRows
+      .map((row) => `
+        <tr>
+          <td>${escapeHtml(row.name)}</td>
+          <td>${row.qty}</td>
+          <td>${escapeHtml(row.details)}</td>
+          <td><a href="${row.url}" target="_blank" rel="noopener noreferrer">Open Link</a></td>
+        </tr>
+      `)
+      .join('');
+
+    const exportedAt = new Date().toLocaleString();
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Home Depot Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #0f172a; }
+    h1 { margin-bottom: 6px; }
+    p { color: #475569; margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
+    th { background: #f1f5f9; }
+    a { color: #1d4ed8; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Home Depot Shopping Report</h1>
+  <p>Generated ${escapeHtml(exportedAt)}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Qty</th>
+        <th>Estimate</th>
+        <th>Search Link</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'home-depot-report.html';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
 
   return (
     <div className="w-full bg-white border-l border-slate-200 h-full min-h-0 flex flex-col z-10 overflow-hidden">
@@ -431,6 +556,13 @@ export const BOM: React.FC = () => {
 
             {tab === 'shop' && (
               <div className="space-y-6">
+                <button
+                  onClick={downloadHomeDepotReport}
+                  className="w-full flex items-center justify-center gap-2 py-2 text-xs rounded-md bg-orange-600 text-white font-medium hover:bg-orange-700 transition-colors"
+                >
+                  <ExternalLink size={14} />
+                  Home Depot Report
+                </button>
                 {Object.entries(shoppingList).map(([name, info]) => (
                   <div key={name} className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                     <div className="font-semibold text-slate-800 mb-1">{name}</div>
@@ -443,6 +575,22 @@ export const BOM: React.FC = () => {
                         {info.count} <span className="text-sm font-normal text-slate-500">qty</span>
                       </div>
                     </div>
+                    <a
+                      href={homeDepotSearchUrl(homeDepotQueryForPart(parts.find((part) => part.name === name) ?? {
+                        id: '',
+                        name,
+                        type: 'hardware',
+                        dimensions: [0, 0, 0],
+                        position: [0, 0, 0],
+                        rotation: [0, 0, 0],
+                      }))}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:text-blue-900"
+                    >
+                      <ExternalLink size={12} />
+                      Search at Home Depot
+                    </a>
                   </div>
                 ))}
                 <div className="text-xs text-slate-400 mt-4 text-center italic">
