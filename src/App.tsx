@@ -66,7 +66,7 @@ export function App() {
           <div className="absolute inset-y-0 right-0 w-[min(22rem,88vw)] bg-white shadow-2xl border-l border-slate-200">
             <button
               onClick={() => setRightPanelOpen(false)}
-              className="absolute left-2 top-2 p-2 rounded-md hover:bg-slate-100 text-slate-500 z-10"
+              className="absolute right-2 top-2 p-2 rounded-md hover:bg-slate-100 text-slate-500 z-10"
               title="Close panel"
             >
               <X size={18} />

@@ -1,5 +1,5 @@
 export type PartType = 'lumber' | 'sheet' | 'hardware';
-export type HardwareKind = 'fastener' | 'hinge' | 'bracket' | 'slide' | 'handle';
+export type HardwareKind = 'fastener' | 'hinge' | 'bracket' | 'slide' | 'handle' | 'dowel';
 
 export type PartProfileType = 'rect' | 'l-cut' | 'polygon' | 'angled';
 export type CutCorner = 'front-left' | 'front-right' | 'back-left' | 'back-right';

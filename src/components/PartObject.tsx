@@ -270,6 +270,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
         hingeLeaf.translate(firstLeafCenter, 0, 0);
         return hingeLeaf;
       }
+      if (data.hardwareKind === 'dowel') {
+        const rod = new THREE.CylinderGeometry(width / 2, width / 2, depth, 24);
+        rod.rotateX(Math.PI / 2);
+        return rod;
+      }
       if (data.hardwareKind === 'bracket') {
         return createLBracketGeometry(width, height, depth);
       }
@@ -515,8 +520,8 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
           <meshStandardMaterial
             ref={materialRef}
             color={fillColor}
-            roughness={data.type === 'hardware' ? 0.3 : 0.8}
-            metalness={data.type === 'hardware' ? 0.8 : 0.1}
+            roughness={data.hardwareKind === 'dowel' ? 0.82 : (data.type === 'hardware' ? 0.3 : 0.8)}
+            metalness={data.hardwareKind === 'dowel' ? 0.06 : (data.type === 'hardware' ? 0.8 : 0.1)}
           />
           {data.hardwareKind === 'hinge' && (
             <>
@@ -546,6 +551,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
             data.hardwareKind === 'hinge' ? (
               <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
                 <boxGeometry args={[Math.max(width + Math.abs(hingePinOffset) + 0.45, 1), Math.max(height + 0.4, 1.2), Math.max(depth + 0.45, 0.7)]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              </mesh>
+            ) : data.hardwareKind === 'dowel' ? (
+              <mesh onPointerDown={handleHardwarePointerDown} onClick={handleHardwareClick}>
+                <boxGeometry args={[Math.max(width + 0.35, 0.7), Math.max(height + 0.35, 0.7), Math.max(depth + 0.5, 4)]} />
                 <meshBasicMaterial transparent opacity={0} depthWrite={false} />
               </mesh>
             ) : (

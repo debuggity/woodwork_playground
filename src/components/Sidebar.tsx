@@ -25,6 +25,8 @@ const COMMON_PARTS: PartTemplate[] = [
   { name: '1x2 Furring Strip', dimensions: [0.75, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f4d8b1' },
   { name: '1x4 Lumber', dimensions: [0.75, 3.5, 96], type: 'lumber', category: 'lumber', color: '#f5deb3' },
   { name: '1x6 Lumber', dimensions: [0.75, 5.5, 96], type: 'lumber', category: 'lumber', color: '#f2d39f' },
+  { name: 'Wood Dowel 1/4" x 36"', dimensions: [0.25, 0.25, 36], type: 'hardware', category: 'lumber', hardwareKind: 'dowel', color: '#d4a373' },
+  { name: 'Wood Dowel 3/8" x 36"', dimensions: [0.375, 0.375, 36], type: 'hardware', category: 'lumber', hardwareKind: 'dowel', color: '#c58e5b' },
   { name: 'Plywood 3/4"', dimensions: [48, 0.75, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
   { name: 'Plywood 1/2"', dimensions: [48, 0.5, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
   { name: 'MDF 3/4"', dimensions: [49, 0.75, 97], type: 'sheet', category: 'sheet', color: '#d8c7a6' },
