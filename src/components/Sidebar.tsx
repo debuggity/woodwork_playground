@@ -65,12 +65,19 @@ const clampMiterAngle = (value: number) => Math.max(-80, Math.min(80, value));
 const FOOTPRINT_EPS = 0.01;
 const ROTATION_EPS = 0.001;
 
-type RectFootprint = {
-  id: string;
+type FootprintBounds = {
   xmin: number;
   xmax: number;
   zmin: number;
   zmax: number;
+};
+
+type Point2 = [number, number];
+
+type FootprintPolygon = {
+  id: string;
+  points: Point2[];
+  bounds: FootprintBounds;
 };
 
 const approxEqual = (a: number, b: number, epsilon = FOOTPRINT_EPS) => Math.abs(a - b) <= epsilon;
@@ -104,19 +111,7 @@ const pickBestHingeForPart = (part: PartData, hinges: PartData[]) => {
   );
 };
 
-const toRectFootprint = (part: PartData): RectFootprint => {
-  const halfW = part.dimensions[0] / 2;
-  const halfD = part.dimensions[2] / 2;
-  return {
-    id: part.id,
-    xmin: part.position[0] - halfW,
-    xmax: part.position[0] + halfW,
-    zmin: part.position[2] - halfD,
-    zmax: part.position[2] + halfD,
-  };
-};
-
-const touchesOrOverlaps = (a: RectFootprint, b: RectFootprint) => {
+const touchesOrOverlaps = (a: FootprintBounds, b: FootprintBounds) => {
   return !(
     a.xmax < b.xmin - FOOTPRINT_EPS
     || b.xmax < a.xmin - FOOTPRINT_EPS
@@ -138,8 +133,187 @@ const uniqueSorted = (values: number[]) => {
   return unique;
 };
 
-type Point2 = [number, number];
 type BoundarySegment = { start: Point2; end: Point2 };
+
+const getRectFootprintPoints = (width: number, depth: number): Point2[] => {
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minZ = -depth / 2;
+  const maxZ = depth / 2;
+  return [
+    [minX, minZ],
+    [maxX, minZ],
+    [maxX, maxZ],
+    [minX, maxZ],
+  ];
+};
+
+const getLCutFootprintPoints = (
+  width: number,
+  depth: number,
+  cutWidth: number,
+  cutDepth: number,
+  corner: CutCorner
+): Point2[] => {
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minZ = -depth / 2;
+  const maxZ = depth / 2;
+
+  if (corner === 'front-left') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX + cutWidth, maxZ],
+      [minX + cutWidth, maxZ - cutDepth],
+      [minX, maxZ - cutDepth],
+    ];
+  }
+  if (corner === 'front-right') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  if (corner === 'back-left') {
+    return [
+      [minX, minZ + cutDepth],
+      [minX + cutWidth, minZ + cutDepth],
+      [minX + cutWidth, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  return [
+    [minX, minZ],
+    [maxX - cutWidth, minZ],
+    [maxX - cutWidth, minZ + cutDepth],
+    [maxX, minZ + cutDepth],
+    [maxX, maxZ],
+    [minX, maxZ],
+  ];
+};
+
+const getSheetLocalFootprintPoints = (part: PartData): Point2[] => {
+  const width = part.dimensions[0];
+  const depth = part.dimensions[2];
+  if (part.profile?.type === 'polygon' && part.profile.points && part.profile.points.length >= 3) {
+    return part.profile.points;
+  }
+
+  if (part.profile?.type === 'l-cut') {
+    const cutWidth = clampLCutValue(part.profile.cutWidth ?? width / 2, width);
+    const cutDepth = clampLCutValue(part.profile.cutDepth ?? depth / 2, depth);
+    const corner = part.profile.corner ?? 'front-left';
+    return getLCutFootprintPoints(width, depth, cutWidth, cutDepth, corner);
+  }
+
+  return getRectFootprintPoints(width, depth);
+};
+
+const toFootprintPolygon = (part: PartData): FootprintPolygon => {
+  const localPoints = getSheetLocalFootprintPoints(part);
+  const points = localPoints.map(([x, z]) => [x + part.position[0], z + part.position[2]] as Point2);
+  const bounds = {
+    xmin: Math.min(...points.map(([x]) => x)),
+    xmax: Math.max(...points.map(([x]) => x)),
+    zmin: Math.min(...points.map(([, z]) => z)),
+    zmax: Math.max(...points.map(([, z]) => z)),
+  };
+
+  return {
+    id: part.id,
+    points,
+    bounds,
+  };
+};
+
+const isPointOnSegment = (point: Point2, start: Point2, end: Point2) => {
+  const [px, pz] = point;
+  const [x1, z1] = start;
+  const [x2, z2] = end;
+  const cross = (px - x1) * (z2 - z1) - (pz - z1) * (x2 - x1);
+  if (Math.abs(cross) > FOOTPRINT_EPS) {
+    return false;
+  }
+  const dot = (px - x1) * (px - x2) + (pz - z1) * (pz - z2);
+  return dot <= FOOTPRINT_EPS;
+};
+
+const pointInPolygonOrOnEdge = (x: number, z: number, points: Point2[]) => {
+  let inside = false;
+  const testPoint: Point2 = [x, z];
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i];
+    const b = points[j];
+
+    if (isPointOnSegment(testPoint, a, b)) {
+      return true;
+    }
+
+    const xi = a[0];
+    const zi = a[1];
+    const xj = b[0];
+    const zj = b[1];
+    const intersects = ((zi > z) !== (zj > z))
+      && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || Number.EPSILON) + xi);
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+};
+
+const orient2d = (a: Point2, b: Point2, c: Point2) =>
+  (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+
+const segmentsTouchOrIntersect = (a1: Point2, a2: Point2, b1: Point2, b2: Point2) => {
+  const o1 = orient2d(a1, a2, b1);
+  const o2 = orient2d(a1, a2, b2);
+  const o3 = orient2d(b1, b2, a1);
+  const o4 = orient2d(b1, b2, a2);
+
+  const hasProperIntersection = ((o1 > FOOTPRINT_EPS && o2 < -FOOTPRINT_EPS) || (o1 < -FOOTPRINT_EPS && o2 > FOOTPRINT_EPS))
+    && ((o3 > FOOTPRINT_EPS && o4 < -FOOTPRINT_EPS) || (o3 < -FOOTPRINT_EPS && o4 > FOOTPRINT_EPS));
+  if (hasProperIntersection) {
+    return true;
+  }
+
+  if (Math.abs(o1) <= FOOTPRINT_EPS && isPointOnSegment(b1, a1, a2)) return true;
+  if (Math.abs(o2) <= FOOTPRINT_EPS && isPointOnSegment(b2, a1, a2)) return true;
+  if (Math.abs(o3) <= FOOTPRINT_EPS && isPointOnSegment(a1, b1, b2)) return true;
+  if (Math.abs(o4) <= FOOTPRINT_EPS && isPointOnSegment(a2, b1, b2)) return true;
+  return false;
+};
+
+const polygonsTouchOrOverlap = (a: FootprintPolygon, b: FootprintPolygon) => {
+  if (!touchesOrOverlaps(a.bounds, b.bounds)) {
+    return false;
+  }
+
+  for (let i = 0; i < a.points.length; i += 1) {
+    const a1 = a.points[i];
+    const a2 = a.points[(i + 1) % a.points.length];
+    for (let j = 0; j < b.points.length; j += 1) {
+      const b1 = b.points[j];
+      const b2 = b.points[(j + 1) % b.points.length];
+      if (segmentsTouchOrIntersect(a1, a2, b1, b2)) {
+        return true;
+      }
+    }
+  }
+
+  if (pointInPolygonOrOnEdge(a.points[0][0], a.points[0][1], b.points)) return true;
+  if (pointInPolygonOrOnEdge(b.points[0][0], b.points[0][1], a.points)) return true;
+
+  return false;
+};
 
 const pointKey = (point: Point2) => `${point[0].toFixed(6)}:${point[1].toFixed(6)}`;
 
@@ -276,9 +450,11 @@ const traceUnionBoundary = (xs: number[], zs: number[], coveredMatrix: boolean[]
     return null;
   }
 
-  const outer = loops.reduce((best, candidate) =>
-    Math.abs(signedPolygonArea(candidate)) > Math.abs(signedPolygonArea(best)) ? candidate : best
-  );
+  if (loops.length > 1) {
+    return null;
+  }
+
+  const outer = loops[0];
 
   if (Math.abs(signedPolygonArea(outer)) <= FOOTPRINT_EPS) {
     return null;
@@ -287,48 +463,27 @@ const traceUnionBoundary = (xs: number[], zs: number[], coveredMatrix: boolean[]
   return signedPolygonArea(outer) < 0 ? [...outer].reverse() : outer;
 };
 
-const findAxisIndex = (axis: number[], target: number) => {
-  let low = 0;
-  let high = axis.length - 1;
-
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const midValue = axis[mid];
-    if (approxEqual(midValue, target)) {
-      return mid;
-    }
-    if (midValue < target) {
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-
-  const fallback = axis.findIndex((value) => approxEqual(value, target));
-  return fallback >= 0 ? fallback : null;
-};
-
-const analyzeCombinedFootprint = (rects: RectFootprint[]) => {
-  if (rects.length === 0) {
+const analyzeCombinedFootprint = (footprints: FootprintPolygon[]) => {
+  if (footprints.length === 0) {
     return null;
   }
 
   const bounds = {
-    xmin: Math.min(...rects.map((r) => r.xmin)),
-    xmax: Math.max(...rects.map((r) => r.xmax)),
-    zmin: Math.min(...rects.map((r) => r.zmin)),
-    zmax: Math.max(...rects.map((r) => r.zmax)),
+    xmin: Math.min(...footprints.map((f) => f.bounds.xmin)),
+    xmax: Math.max(...footprints.map((f) => f.bounds.xmax)),
+    zmin: Math.min(...footprints.map((f) => f.bounds.zmin)),
+    zmax: Math.max(...footprints.map((f) => f.bounds.zmax)),
   };
 
   const xs = uniqueSorted([
     bounds.xmin,
     bounds.xmax,
-    ...rects.flatMap((r) => [r.xmin, r.xmax]),
+    ...footprints.flatMap((f) => [f.bounds.xmin, f.bounds.xmax, ...f.points.map(([x]) => x)]),
   ]);
   const zs = uniqueSorted([
     bounds.zmin,
     bounds.zmax,
-    ...rects.flatMap((r) => [r.zmin, r.zmax]),
+    ...footprints.flatMap((f) => [f.bounds.zmin, f.bounds.zmax, ...f.points.map(([, z]) => z)]),
   ]);
 
   type Cell = { x0: number; x1: number; z0: number; z1: number; covered: boolean };
@@ -338,23 +493,6 @@ const analyzeCombinedFootprint = (rects: RectFootprint[]) => {
   const coveredMatrix = Array.from({ length: nx }, () =>
     Array.from({ length: nz }, () => false)
   );
-
-  for (const rect of rects) {
-    const xiStart = findAxisIndex(xs, rect.xmin);
-    const xiEnd = findAxisIndex(xs, rect.xmax);
-    const ziStart = findAxisIndex(zs, rect.zmin);
-    const ziEnd = findAxisIndex(zs, rect.zmax);
-
-    if (xiStart === null || xiEnd === null || ziStart === null || ziEnd === null) {
-      return null;
-    }
-
-    for (let xi = xiStart; xi < xiEnd; xi += 1) {
-      for (let zi = ziStart; zi < ziEnd; zi += 1) {
-        coveredMatrix[xi][zi] = true;
-      }
-    }
-  }
 
   let unionArea = 0;
   for (let xi = 0; xi < nx; xi += 1) {
@@ -368,7 +506,10 @@ const analyzeCombinedFootprint = (rects: RectFootprint[]) => {
         continue;
       }
 
-      const covered = coveredMatrix[xi][zi];
+      const cx = (x0 + x1) / 2;
+      const cz = (z0 + z1) / 2;
+      const covered = footprints.some((footprint) => pointInPolygonOrOnEdge(cx, cz, footprint.points));
+      coveredMatrix[xi][zi] = covered;
       if (covered) {
         unionArea += area;
       }
@@ -717,11 +858,6 @@ export const Sidebar: React.FC = () => {
     // Force select mode before merge so behavior/perf matches the fast path.
     setTool('select');
 
-    if (selectedPart.profile && selectedPart.profile.type !== 'rect') {
-      setCombineMessage({ tone: 'error', text: 'Only rectangular sheets can be merged right now.' });
-      return;
-    }
-
     const isUnrotated = selectedPart.rotation.every((r) => Math.abs(r) <= ROTATION_EPS);
     if (!isUnrotated) {
       setCombineMessage({ tone: 'error', text: 'Rotate sheet back to 0 deg before combining.' });
@@ -731,7 +867,6 @@ export const Sidebar: React.FC = () => {
     const compatibleSheets = parts.filter((part) => {
       if (part.type !== 'sheet') return false;
       if (part.id === selectedPart.id) return false;
-      if (part.profile && part.profile.type !== 'rect') return false;
 
       const sameThickness = approxEqual(part.dimensions[1], selectedPart.dimensions[1], 0.005);
       const sameY = approxEqual(part.position[1], selectedPart.position[1], 0.01);
@@ -739,11 +874,10 @@ export const Sidebar: React.FC = () => {
       return sameThickness && sameY && sameRotation;
     });
 
-    const selectedRect = toRectFootprint(selectedPart);
-    const touchingParts = compatibleSheets.filter((part) => {
-      const rect = toRectFootprint(part);
-      return touchesOrOverlaps(selectedRect, rect);
-    });
+    const selectedFootprint = toFootprintPolygon(selectedPart);
+    const touchingParts = compatibleSheets.filter((part) =>
+      polygonsTouchOrOverlap(selectedFootprint, toFootprintPolygon(part))
+    );
 
     if (touchingParts.length === 0) {
       setCombineMessage({ tone: 'error', text: 'No touching or overlapping sheet found to combine.' });
@@ -752,8 +886,8 @@ export const Sidebar: React.FC = () => {
 
     const mergeParts = [selectedPart, ...touchingParts];
     const mergeIds = new Set(mergeParts.map((part) => part.id));
-    const mergeRects = mergeParts.map((part) => toRectFootprint(part));
-    const combined = analyzeCombinedFootprint(mergeRects);
+    const mergeFootprints = mergeParts.map((part) => toFootprintPolygon(part));
+    const combined = analyzeCombinedFootprint(mergeFootprints);
 
     if (!combined) {
       const detail = touchingParts.length === 1
