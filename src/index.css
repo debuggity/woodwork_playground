@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+:where(button) {
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+
+:where(button:hover:not(:disabled)) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  filter: brightness(1.01);
+}
+
+:where(button:active:not(:disabled)) {
+  transform: translateY(0);
+}
