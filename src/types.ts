@@ -42,4 +42,4 @@ export interface PartData {
   attachment?: HingeAttachment;
 }
 
-export type ToolType = 'select' | 'move' | 'rotate' | 'delete';
+export type ToolType = 'select' | 'move' | 'rotate' | 'delete' | 'auto-screw';

@@ -35,7 +35,9 @@ const COMMON_PARTS: PartTemplate[] = [
   { name: 'L-Bracket', dimensions: [1.5, 1.5, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'bracket', color: '#7c8aa0' },
   { name: 'Drawer Slide', dimensions: [12, 1.8, 0.45], type: 'hardware', category: 'hardware', hardwareKind: 'slide', color: '#8b96a8' },
   { name: 'Pull Handle', dimensions: [4, 1.0, 0.75], type: 'hardware', category: 'hardware', hardwareKind: 'handle', color: '#78869c' },
-  { name: 'Nail / Screw', dimensions: [0.12, 2.0, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'fastener', color: '#a0a0a0' },
+  { name: '#8 x 1-1/4" Wood Screw', dimensions: [0.164, 1.25, 0.164], type: 'hardware', category: 'hardware', hardwareKind: 'fastener', color: '#a0a0a0' },
+  { name: '#10 x 2-1/2" Wood Screw', dimensions: [0.19, 2.5, 0.19], type: 'hardware', category: 'hardware', hardwareKind: 'fastener', color: '#9ca3af' },
+  { name: '#12 x 3" Wood Screw', dimensions: [0.216, 3, 0.216], type: 'hardware', category: 'hardware', hardwareKind: 'fastener', color: '#94a3b8' },
 ];
 
 const L_CUT_CORNERS: { value: CutCorner; label: string }[] = [

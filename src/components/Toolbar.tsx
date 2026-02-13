@@ -1,6 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X } from 'lucide-react';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -27,13 +27,21 @@ export const Toolbar: React.FC = () => {
     requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
+    autoScrewParts,
+    selectPart,
   } = useStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const specialMenuRef = useRef<HTMLDivElement>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState('wood-project');
   const [isStarkPanelMinimized, setIsStarkPanelMinimized] = useState(true);
+  const [isSpecialMenuOpen, setIsSpecialMenuOpen] = useState(false);
+  const [autoScrewFirstId, setAutoScrewFirstId] = useState<string | null>(null);
+  const [autoScrewStatus, setAutoScrewStatus] = useState<{ tone: 'info' | 'success' | 'error'; text: string } | null>(null);
+  const autoScrewLastHandledSelectionRef = useRef<string | null>(null);
   const selectedPart = parts.find((part) => part.id === selectedId);
+  const autoScrewFirstPart = autoScrewFirstId ? parts.find((part) => part.id === autoScrewFirstId) : null;
   const selectedHinge = selectedPart?.hardwareKind === 'hinge' ? selectedPart : null;
   const hingeRangeRad = (() => {
     const defaultMin = (-110 * Math.PI) / 180;
@@ -68,10 +76,98 @@ export const Toolbar: React.FC = () => {
     if (window.confirm('Are you sure you want to delete everything and reset the scene?')) {
       resetScene();
     }
+    setIsSpecialMenuOpen(false);
   };
+
+  useEffect(() => {
+    if (!isSpecialMenuOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!specialMenuRef.current?.contains(event.target as Node)) {
+        setIsSpecialMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isSpecialMenuOpen]);
+
+  useEffect(() => {
+    if (tool !== 'auto-screw') {
+      setAutoScrewFirstId(null);
+      setAutoScrewStatus(null);
+      autoScrewLastHandledSelectionRef.current = null;
+    }
+  }, [tool]);
+
+  useEffect(() => {
+    if (tool !== 'auto-screw' || !selectedId) return;
+    if (autoScrewLastHandledSelectionRef.current === selectedId) return;
+    autoScrewLastHandledSelectionRef.current = selectedId;
+
+    const pickedPart = parts.find((part) => part.id === selectedId);
+    if (!pickedPart) return;
+    if (pickedPart.type === 'hardware') {
+      setAutoScrewStatus({
+        tone: 'error',
+        text: 'Pick wood or sheet parts only. Hardware parts are ignored.',
+      });
+      return;
+    }
+
+    if (!autoScrewFirstId) {
+      setAutoScrewFirstId(selectedId);
+      setAutoScrewStatus({
+        tone: 'info',
+        text: `First piece selected: ${pickedPart.name}. Step 2: click the second piece.`,
+      });
+      return;
+    }
+
+    if (autoScrewFirstId === selectedId) {
+      setAutoScrewStatus({
+        tone: 'info',
+        text: 'Pick a different second piece.',
+      });
+      return;
+    }
+
+    const placement = autoScrewParts(autoScrewFirstId, selectedId);
+    if (placement.ok) {
+      setTool('select');
+      setAutoScrewFirstId(null);
+      setAutoScrewStatus(null);
+      autoScrewLastHandledSelectionRef.current = null;
+      return;
+    }
+
+    setAutoScrewStatus({
+      tone: 'error',
+      text: placement.message,
+    });
+  }, [autoScrewFirstId, autoScrewParts, parts, selectedId, tool]);
 
   const handleOpenExport = () => {
     setIsExportModalOpen(true);
+  };
+
+  const handleActivateAutoScrew = () => {
+    setIsSpecialMenuOpen(false);
+    setTool('auto-screw');
+    setAutoScrewFirstId(null);
+    setAutoScrewStatus({
+      tone: 'info',
+      text: 'Step 1: click the first wood piece, then click the second piece.',
+    });
+    autoScrewLastHandledSelectionRef.current = null;
+    selectPart(null);
+  };
+
+  const handleExitAutoScrew = () => {
+    setTool('select');
+    setAutoScrewFirstId(null);
+    setAutoScrewStatus(null);
+    autoScrewLastHandledSelectionRef.current = null;
   };
 
   const handleConfirmExport = () => {
@@ -173,46 +269,79 @@ export const Toolbar: React.FC = () => {
         </button>
 
         <button
-          onClick={handleReset}
-          className="p-2 rounded-md text-red-600 hover:bg-red-50 transition-colors border border-transparent hover:border-red-200"
-          title="Reset Scene"
-        >
-          <RotateCcw size={20} />
-        </button>
-
-        <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
-
-        <button
-          onClick={toggleSnap}
-          className={`p-2 rounded-md transition-colors ${
-            snapEnabled
-              ? 'bg-blue-100 text-blue-600'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title={snapEnabled ? 'Snapping On' : 'Snapping Off'}
-        >
-          <Magnet size={20} />
-        </button>
-
-        <button
-          onClick={toggleFloor}
-          className={`p-2 rounded-md transition-colors ${
-            floorEnabled
-              ? 'bg-blue-100 text-blue-600'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          title={floorEnabled ? 'Floor On' : 'Floor Off'}
-        >
-          <Grid size={20} />
-        </button>
-
-        <button
           onClick={requestCameraFocus}
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
           title="Auto Center Camera"
         >
           <LocateFixed size={20} />
         </button>
+
+        <div className="relative" ref={specialMenuRef}>
+          <button
+            onClick={() => setIsSpecialMenuOpen((prev) => !prev)}
+            className={`p-2 rounded-md transition-colors ${
+              isSpecialMenuOpen || tool === 'auto-screw'
+                ? 'bg-blue-100 text-blue-600'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+            title="Special Tools"
+            aria-haspopup="menu"
+            aria-expanded={isSpecialMenuOpen}
+          >
+            <Wrench size={20} />
+          </button>
+
+          {isSpecialMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-52 rounded-lg border border-slate-200 bg-white shadow-xl p-1.5 z-30">
+              <button
+                onClick={handleActivateAutoScrew}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Hammer size={16} />
+                  Auto Screw
+                </span>
+                {tool === 'auto-screw' && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <button
+                onClick={toggleFloor}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Grid size={16} />
+                  Floor {floorEnabled ? 'On' : 'Off'}
+                </span>
+                {floorEnabled && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <button
+                onClick={toggleSnap}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Magnet size={16} />
+                  Snapping {snapEnabled ? 'On' : 'Off'}
+                </span>
+                {snapEnabled && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <button
+                onClick={handleReset}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-red-600 hover:bg-red-50 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <RotateCcw size={16} />
+                  Reset Scene
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
@@ -240,6 +369,42 @@ export const Toolbar: React.FC = () => {
           className="hidden"
         />
       </div>
+
+      {tool === 'auto-screw' && (
+        <div className="absolute top-[4.1rem] left-1/2 -translate-x-1/2 z-20 w-[min(33rem,calc(100%-1rem))] rounded-xl border border-blue-200 bg-white/95 backdrop-blur shadow-lg px-3 py-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">Auto Screw Mode</div>
+              <div className="mt-0.5 text-sm text-slate-700">
+                {!autoScrewFirstPart
+                  ? 'Step 1: Select your first wood piece.'
+                  : `Step 2: Select the second piece to join with ${autoScrewFirstPart.name}.`}
+              </div>
+              {autoScrewStatus && (
+                <div
+                  className={`mt-1.5 text-xs ${
+                    autoScrewStatus.tone === 'success'
+                      ? 'text-emerald-700'
+                      : autoScrewStatus.tone === 'error'
+                        ? 'text-amber-700'
+                        : 'text-slate-600'
+                  }`}
+                >
+                  {autoScrewStatus.text}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={handleExitAutoScrew}
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 transition-colors"
+              title="Exit Auto Screw Mode"
+            >
+              <X size={12} />
+              Exit
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         className="fixed z-20"
