@@ -63,13 +63,30 @@ const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({
     const bounds = new THREE.Box3();
     focusParts.forEach((part) => {
       const center = new THREE.Vector3(...part.position);
-      const halfSize = new THREE.Vector3(
+      const [halfW, halfH, halfD] = [
         part.dimensions[0] / 2,
         part.dimensions[1] / 2,
-        part.dimensions[2] / 2
+        part.dimensions[2] / 2,
+      ];
+      const quaternion = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(part.rotation[0], part.rotation[1], part.rotation[2], 'XYZ')
       );
-      bounds.expandByPoint(center.clone().sub(halfSize));
-      bounds.expandByPoint(center.clone().add(halfSize));
+
+      const corners = [
+        new THREE.Vector3(halfW, halfH, halfD),
+        new THREE.Vector3(halfW, halfH, -halfD),
+        new THREE.Vector3(halfW, -halfH, halfD),
+        new THREE.Vector3(halfW, -halfH, -halfD),
+        new THREE.Vector3(-halfW, halfH, halfD),
+        new THREE.Vector3(-halfW, halfH, -halfD),
+        new THREE.Vector3(-halfW, -halfH, halfD),
+        new THREE.Vector3(-halfW, -halfH, -halfD),
+      ];
+
+      corners.forEach((corner) => {
+        corner.applyQuaternion(quaternion).add(center);
+        bounds.expandByPoint(corner);
+      });
     });
 
     const center = new THREE.Vector3();
@@ -77,7 +94,13 @@ const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({
     bounds.getCenter(center);
     bounds.getSize(size);
 
-    const targetRadius = Math.max(size.length() * 0.6, 18);
+    const radius = Math.max(size.length() / 2, 1);
+    const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+    const halfFov = Math.max(0.1, Math.min(verticalFov, horizontalFov) / 2);
+    const fitDistance = radius / Math.sin(halfFov);
+    const targetDistance = Math.max(fitDistance * 1.25, 26);
+
     const currentDirection = camera.position.clone().sub(controls.target);
     if (currentDirection.lengthSq() < 0.001) {
       currentDirection.set(1, 0.7, 1);
@@ -85,9 +108,9 @@ const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({
     currentDirection.normalize();
 
     controls.target.copy(center);
-    camera.position.copy(center.clone().add(currentDirection.multiplyScalar(targetRadius)));
-    camera.near = 0.1;
-    camera.far = Math.max(camera.far, targetRadius * 24);
+    camera.position.copy(center.clone().add(currentDirection.multiplyScalar(targetDistance)));
+    camera.near = Math.max(0.05, targetDistance / 800);
+    camera.far = Math.max(camera.far, targetDistance + radius * 30);
     camera.updateProjectionMatrix();
     controls.update();
   }, [camera, controls, focusToken]);

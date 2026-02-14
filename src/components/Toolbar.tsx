@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb } from 'lucide-react';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -35,7 +35,7 @@ export const Toolbar: React.FC = () => {
   const specialMenuRef = useRef<HTMLDivElement>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState('wood-project');
-  const [isStarkPanelMinimized, setIsStarkPanelMinimized] = useState(true);
+  const [isExplosionPanelOpen, setIsExplosionPanelOpen] = useState(false);
   const [isSpecialMenuOpen, setIsSpecialMenuOpen] = useState(false);
   const [autoScrewFirstId, setAutoScrewFirstId] = useState<string | null>(null);
   const [autoScrewStatus, setAutoScrewStatus] = useState<{ tone: 'info' | 'success' | 'error'; text: string } | null>(null);
@@ -83,7 +83,8 @@ export const Toolbar: React.FC = () => {
     if (!isSpecialMenuOpen) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
-      if (!specialMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (isSpecialMenuOpen && !specialMenuRef.current?.contains(target)) {
         setIsSpecialMenuOpen(false);
       }
     };
@@ -224,19 +225,19 @@ export const Toolbar: React.FC = () => {
 
   return (
     <>
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-2 flex flex-wrap items-center justify-center gap-1 sm:gap-2 z-20 max-w-[calc(100%-1rem)]">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-1.5 sm:p-2 flex flex-wrap items-center justify-center gap-0.5 sm:gap-2 z-20 max-w-[calc(100%-0.5rem)]">
         {tools.map((t) => (
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            className={`p-2 rounded-md transition-colors ${
+            className={`p-1.5 sm:p-2 rounded-md transition-colors ${
               tool === t.id
                 ? 'bg-blue-100 text-blue-600'
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
             title={t.label}
           >
-            <t.icon size={20} />
+            <t.icon size={18} />
           </button>
         ))}
 
@@ -245,41 +246,115 @@ export const Toolbar: React.FC = () => {
         <button
           onClick={handleDelete}
           disabled={!selectedId}
-          className={`p-2 rounded-md transition-colors ${
+          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
             !selectedId
               ? 'text-slate-300 cursor-not-allowed'
               : 'text-red-600 hover:bg-red-50'
           }`}
           title="Delete Selected"
         >
-          <Trash2 size={20} />
+          <Trash2 size={18} />
         </button>
 
         <button
           onClick={handleDuplicate}
           disabled={!selectedId}
-          className={`p-2 rounded-md transition-colors ${
+          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
             !selectedId
               ? 'text-slate-300 cursor-not-allowed'
               : 'text-blue-600 hover:bg-blue-50'
           }`}
           title="Duplicate Selected"
         >
-          <Copy size={20} />
+          <Copy size={18} />
         </button>
 
         <button
           onClick={requestCameraFocus}
-          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+          className="p-1.5 sm:p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
           title="Auto Center Camera"
         >
-          <LocateFixed size={20} />
+          <LocateFixed size={18} />
         </button>
+
+        <div className="relative">
+          <button
+            onClick={() => {
+              setIsSpecialMenuOpen(false);
+              setIsExplosionPanelOpen((prev) => !prev);
+            }}
+            className={`inline-flex items-center justify-center gap-0 sm:gap-1.5 px-1.5 sm:px-2 py-1.5 sm:py-2 min-w-9 rounded-md transition-colors ${
+              isExplosionPanelOpen
+                ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+            title="Explosion Slider"
+            aria-haspopup="dialog"
+            aria-expanded={isExplosionPanelOpen}
+          >
+            <Bomb size={14} />
+            <span className="hidden sm:inline-flex">
+              {isExplosionPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </span>
+          </button>
+
+          {isExplosionPanelOpen && (
+            <div className="fixed left-1/2 -translate-x-1/2 top-[5.75rem] sm:top-[4.25rem] z-30 w-[min(22rem,calc(100vw-0.75rem))] rounded-xl border border-amber-300/50 bg-slate-950/90 shadow-[0_0_40px_rgba(251,146,60,0.22)] backdrop-blur-md p-3">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-amber-300">
+                <span>Explosion Matrix</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-amber-100">{explodeFactor.toFixed(2)}</span>
+                  <button
+                    onClick={() => setIsExplosionPanelOpen(false)}
+                    className="inline-flex items-center justify-center rounded p-1 text-amber-200 hover:text-amber-50 hover:bg-amber-500/15 transition-colors"
+                    title="Minimize Explosion Slider"
+                    aria-label="Minimize explosion slider"
+                  >
+                    <ChevronDown size={13} />
+                  </button>
+                </div>
+              </div>
+              <div className="mt-1 text-sm font-semibold text-amber-50">
+                Explosion Slider
+              </div>
+              <div className="mt-1 text-[11px] text-amber-100/80">
+                Click the <span className="font-semibold">Explosion button</span> again to collapse this panel.
+              </div>
+              <div className="mt-2 px-1">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={explodeFactor}
+                  onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+                  className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-amber-400"
+                  aria-label="Explosion slider"
+                />
+                <div className="mt-1 flex justify-between text-[10px] font-mono text-amber-200/90">
+                  <span>0.00 NORMAL</span>
+                  <span>1.00 FULL EXPLODE</span>
+                </div>
+              </div>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-300 via-orange-400 to-red-500 transition-[width] duration-150"
+                  style={{ width: `${explodeFactor * 100}%` }}
+                />
+              </div>
+              <div className="mt-2 text-[11px] text-amber-100/80">
+                Pull the model apart to inspect fit, order, and spacing.
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="relative" ref={specialMenuRef}>
           <button
-            onClick={() => setIsSpecialMenuOpen((prev) => !prev)}
-            className={`p-2 rounded-md transition-colors ${
+            onClick={() => {
+              setIsSpecialMenuOpen((prev) => !prev);
+            }}
+            className={`p-1.5 sm:p-2 rounded-md transition-colors ${
               isSpecialMenuOpen || tool === 'auto-screw'
                 ? 'bg-blue-100 text-blue-600'
                 : 'text-slate-600 hover:bg-slate-100'
@@ -288,7 +363,7 @@ export const Toolbar: React.FC = () => {
             aria-haspopup="menu"
             aria-expanded={isSpecialMenuOpen}
           >
-            <Wrench size={20} />
+            <Wrench size={18} />
           </button>
 
           {isSpecialMenuOpen && (
@@ -345,21 +420,23 @@ export const Toolbar: React.FC = () => {
 
         <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
-        <button
-          onClick={handleOpenExport}
-          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
-          title="Save Design"
-        >
-          <Download size={20} />
-        </button>
+        <div className="inline-flex items-center gap-0.5 sm:gap-1 shrink-0 whitespace-nowrap">
+          <button
+            onClick={handleOpenExport}
+            className="p-1.5 sm:p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+            title="Save Design"
+          >
+            <Download size={18} />
+          </button>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
-          title="Load Design"
-        >
-          <Upload size={20} />
-        </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1.5 sm:p-2 rounded-md text-slate-600 hover:bg-slate-100 transition-colors"
+            title="Load Design"
+          >
+            <Upload size={18} />
+          </button>
+        </div>
 
         <input
           type="file"
@@ -405,71 +482,6 @@ export const Toolbar: React.FC = () => {
           </div>
         </div>
       )}
-
-      <div
-        className="fixed z-20"
-        style={{
-          right: 'calc(env(safe-area-inset-right, 0px) + 0.75rem)',
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
-        }}
-      >
-        {isStarkPanelMinimized ? (
-          <button
-            onClick={() => setIsStarkPanelMinimized(false)}
-            className="h-14 w-14 rounded-xl border border-cyan-300/50 bg-slate-950/85 shadow-[0_0_30px_rgba(34,211,238,0.22)] backdrop-blur-md text-cyan-100 hover:text-white hover:border-cyan-200/70 transition-colors flex items-center justify-center"
-            title="Open Tony Stark Slider"
-          >
-            <div className="text-center leading-none">
-              <div className="text-[10px] font-bold tracking-wide">TS</div>
-              <ChevronUp size={14} className="mx-auto mt-0.5" />
-            </div>
-          </button>
-        ) : (
-          <div className="w-[min(24rem,calc(100vw-1rem))] rounded-xl border border-cyan-300/50 bg-slate-950/80 shadow-[0_0_40px_rgba(34,211,238,0.22)] backdrop-blur-md p-3">
-            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-cyan-300">
-              <span>Stark Assembly Matrix</span>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-cyan-100">{explodeFactor.toFixed(2)}</span>
-                <button
-                  onClick={() => setIsStarkPanelMinimized(true)}
-                  className="p-1 rounded text-cyan-200 hover:text-white hover:bg-cyan-500/15 transition-colors"
-                  title="Minimize Tony Stark Slider"
-                >
-                  <ChevronDown size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="mt-1 text-sm font-semibold text-cyan-50">
-              Tony Stark Slider
-            </div>
-            <div className="mt-2 px-1">
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={explodeFactor}
-                onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
-                className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400"
-                aria-label="Tony Stark explosion slider"
-              />
-              <div className="mt-1 flex justify-between text-[10px] font-mono text-cyan-200/90">
-                <span>0.00 NORMAL</span>
-                <span>1.00 FULL EXPLODE</span>
-              </div>
-            </div>
-            <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-cyan-300 via-sky-400 to-blue-500 transition-[width] duration-150"
-                style={{ width: `${explodeFactor * 100}%` }}
-              />
-            </div>
-            <div className="mt-2 text-[11px] text-cyan-100/80">
-              Deconstruct and reassemble like you own a billion-dollar workshop.
-            </div>
-          </div>
-        )}
-      </div>
 
       {selectedHinge && (
         <div
