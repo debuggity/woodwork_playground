@@ -51,34 +51,83 @@ const SectionCard = ({ title, children }: { title: string; children: React.React
 
 const HomePage = ({ openApp }: { openApp: () => void }) => (
   <div className="space-y-6">
-    <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-7 sm:p-10 shadow-sm">
-      <p className="text-xs uppercase tracking-[0.18em] text-slate-500 font-semibold">WoodWorker</p>
-      <h1 className="mt-3 text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">Plan, fit, and build smarter.</h1>
-      <p className="mt-4 max-w-2xl text-slate-700 text-lg">
-        A woodworking design app for laying out cuts, joints, screws, and bill of materials before you touch the saw.
+    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 sm:p-10 shadow-sm">
+      <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-amber-300/15 blur-3xl" />
+      <div className="pointer-events-none absolute -left-20 -bottom-20 h-56 w-56 rounded-full bg-blue-300/15 blur-3xl" />
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 font-semibold">WoodWorker</p>
+      <h1 className="mt-3 max-w-4xl text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">
+        Woodworking for everyone,
+        <span className="block">with real-world results.</span>
+      </h1>
+      <p className="mt-4 max-w-3xl text-slate-700 text-lg">
+        Move parts around like digital LEGO, use smart helpers like Auto Screw, and generate cut and shopping lists so projects stay fun, clear, and build-ready.
       </p>
+      <div className="mt-5 flex flex-wrap gap-2 text-xs">
+        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Beginner-friendly</span>
+        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Serious-project ready</span>
+        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Export + share anytime</span>
+      </div>
       <div className="mt-6 flex flex-wrap gap-3">
         <button
           onClick={openApp}
           className="rounded-lg bg-blue-600 px-5 py-2.5 text-white font-medium hover:bg-blue-700"
         >
-          Open App
+          Start Building
         </button>
       </div>
     </section>
 
     <div className="grid gap-4 sm:grid-cols-3">
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-slate-900">Fast Layout</h3>
-        <p className="mt-2 text-sm text-slate-600">Drag boards into position and check fit in seconds.</p>
+        <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 aspect-[4/3] sm:aspect-square">
+          <video
+            className="h-full w-full object-cover"
+            src="/legos.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="metadata"
+          />
+        </div>
+        <h3 className="text-base font-semibold text-slate-900">Feels Like a Game, Scales to Real Work</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          Start with little experience and design by moving parts around like digital LEGO. Convenience tools like Auto Screw keep it fun and fast, while still supporting serious builds.
+        </p>
       </div>
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-slate-900">Smart Auto Screw</h3>
-        <p className="mt-2 text-sm text-slate-600">Auto-place practical screws for common joinery cases.</p>
+        <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 aspect-[4/3] sm:aspect-square">
+          <video
+            className="h-full w-full object-cover"
+            src="/cuts-shops.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="metadata"
+          />
+        </div>
+        <h3 className="text-base font-semibold text-slate-900">Cut List + Shopping List Built In</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          Generate what to cut and what to buy from your design so projects feel closer to assembling an IKEA-style plan than guessing measurements from scratch.
+        </p>
       </div>
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-slate-900">Clear BOM</h3>
-        <p className="mt-2 text-sm text-slate-600">Get bill-of-materials and cut details ready for the shop.</p>
+        <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 aspect-[4/3] sm:aspect-square">
+          <video
+            className="h-full w-full object-cover"
+            src="/import-export.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="metadata"
+          />
+        </div>
+        <h3 className="text-base font-semibold text-slate-900">Your Designs Stay Yours</h3>
+        <p className="mt-2 text-sm text-slate-600">
+          Export and import projects anytime so you can keep designs forever, back them up, and easily share them with friends.
+        </p>
       </div>
     </div>
   </div>
@@ -163,7 +212,7 @@ const AppOverlayNav = ({ navigate, route }: { navigate: (route: RouteId) => void
             : 'bg-blue-600 text-white ring-2 ring-blue-300 hover:bg-blue-700'
         }`}
       >
-        Use App
+        Build
       </button>
       <button onClick={() => navigate('home')} className="rounded px-2 py-1 hover:bg-slate-100">Home</button>
       <button onClick={() => navigate('blog')} className="rounded px-2 py-1 hover:bg-slate-100">Blog</button>

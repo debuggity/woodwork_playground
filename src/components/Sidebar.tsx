@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Vector3, Euler } from 'three';
+import { Vector3, Euler, Color } from 'three';
 import { useStore } from '../store';
 import { CutCorner, HardwareKind, PartData } from '../types';
-import { Plus, Ruler, Box, Move3d, RotateCw, ArrowDownToLine, Layers, Search, Settings2, Hammer, MousePointer2 } from 'lucide-react';
+import { Plus, Ruler, Box, Move3d, RotateCw, ArrowDownToLine, Layers, Search, Settings2, Hammer, MousePointer2, Palette } from 'lucide-react';
 import { clsx } from 'clsx';
 
-type LibraryCategory = 'lumber' | 'sheet' | 'hardware';
+type LibraryCategory = 'lumber' | 'sheet' | 'hardware' | 'staining';
 type PartTemplate = {
   name: string;
   dimensions: [number, number, number];
@@ -52,7 +52,69 @@ const LIBRARY_CATEGORY_META: { id: LibraryCategory | 'all'; label: string }[] = 
   { id: 'lumber', label: 'Lumber' },
   { id: 'sheet', label: 'Sheet Goods' },
   { id: 'hardware', label: 'Hardware' },
+  { id: 'staining', label: 'Staining' },
 ];
+
+type StainPreset = {
+  id: 'unstained' | 'natural' | 'golden-oak' | 'early-american' | 'dark-walnut' | 'ebony';
+  label: string;
+  baseColor: string;
+};
+
+const STAIN_PRESETS: StainPreset[] = [
+  { id: 'unstained', label: 'Unstained', baseColor: '#e6c89a' },
+  { id: 'natural', label: 'Natural', baseColor: '#d4a16b' },
+  { id: 'golden-oak', label: 'Golden Oak', baseColor: '#b87945' },
+  { id: 'early-american', label: 'Early American', baseColor: '#8c5634' },
+  { id: 'dark-walnut', label: 'Dark Walnut', baseColor: '#5e3e2c' },
+  { id: 'ebony', label: 'Ebony', baseColor: '#2b1e1c' },
+];
+
+const DEFAULT_PART_COLORS = new Map(COMMON_PARTS.map((part) => [part.name, part.color]));
+
+const getDefaultWoodColor = (part: PartData) => {
+  const catalogColor = DEFAULT_PART_COLORS.get(part.name);
+  if (catalogColor) return catalogColor;
+  if (part.hardwareKind === 'dowel') return '#d4a373';
+  if (part.type === 'sheet') {
+    if (part.name.toLowerCase().includes('mdf')) return '#d8c7a6';
+    return '#dec49a';
+  }
+  return '#eecfa1';
+};
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+const hashText = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const isWoodStainable = (part: PartData) => part.type !== 'hardware' || part.hardwareKind === 'dowel';
+
+const getStainedPartColor = (part: PartData, preset: StainPreset) => {
+  if (preset.id === 'unstained') {
+    return getDefaultWoodColor(part);
+  }
+
+  const color = new Color(preset.baseColor);
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+
+  const partHash = hashText(`${part.id}:${part.name}`);
+  const variation = ((partHash % 1000) / 999) - 0.5;
+  const shapeBias = (((part.dimensions[0] + part.dimensions[2]) * 0.11) % 0.2) - 0.1;
+  const isSheet = part.type === 'sheet';
+  const nextSaturation = clamp01(hsl.s + (isSheet ? -0.03 : 0.01));
+  const nextLightness = clamp01(hsl.l + variation * 0.07 + shapeBias * 0.5 + (isSheet ? 0.02 : 0));
+
+  color.setHSL(hsl.h, nextSaturation, nextLightness);
+  return `#${color.getHexString()}`;
+};
 
 const clampLCutValue = (value: number, maxValue: number) => {
   const minValue = Math.min(0.125, maxValue / 2);
@@ -623,6 +685,7 @@ export const Sidebar: React.FC = () => {
   const [libraryCategory, setLibraryCategory] = useState<LibraryCategory | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>('unstained');
 
   useEffect(() => {
     if (selectedId) {
@@ -634,6 +697,19 @@ export const Sidebar: React.FC = () => {
   useEffect(() => {
     setCombineMessage(null);
   }, [selectedId]);
+
+  const applyGlobalStainPreset = (presetId: StainPreset['id']) => {
+    const preset = STAIN_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+
+    setActiveStainPresetId(presetId);
+    setParts(parts.map((part) => {
+      if (!isWoodStainable(part)) return part;
+      const nextColor = getStainedPartColor(part, preset);
+      if (nextColor === part.color) return part;
+      return { ...part, color: nextColor };
+    }));
+  };
 
   const handleAddPart = (partTemplate: PartTemplate) => {
     setTool('select');
@@ -661,6 +737,12 @@ export const Sidebar: React.FC = () => {
         }
         : undefined,
     };
+
+    if (isWoodStainable(newPart)) {
+      const activePreset = STAIN_PRESETS.find((item) => item.id === activeStainPresetId) ?? STAIN_PRESETS[0];
+      newPart.color = getStainedPartColor(newPart, activePreset);
+    }
+
     addPart(newPart);
   };
 
@@ -969,6 +1051,7 @@ export const Sidebar: React.FC = () => {
   );
 
   const visibleLibraryParts = COMMON_PARTS.filter((part) => {
+    if (libraryCategory === 'staining') return false;
     if (libraryCategory === 'all') return true;
     return part.category === libraryCategory;
   });
@@ -1079,28 +1162,63 @@ export const Sidebar: React.FC = () => {
               ))}
             </div>
 
-            {visibleLibraryParts.length === 0 ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                No parts in this category.
+            {libraryCategory === 'staining' ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Palette size={14} className="text-amber-700" />
+                  <h3 className="text-xs font-semibold text-slate-700">Staining (Apply to All Wood)</h3>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Preview common stain tones across lumber/sheet pieces while keeping subtle color variation so surfaces do not look flat.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {STAIN_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => applyGlobalStainPreset(preset.id)}
+                      className={clsx(
+                        'flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors',
+                        activeStainPresetId === preset.id
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+                      )}
+                      title={`Apply ${preset.label} stain to all wood`}
+                    >
+                      <span
+                        className="inline-block h-3.5 w-3.5 rounded-full border border-black/10"
+                        style={{ backgroundColor: preset.baseColor }}
+                      />
+                      <span className="truncate">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : (
-              visibleLibraryParts.map((part) => (
-                <button
-                  key={part.name}
-                  onClick={() => handleAddPart(part)}
-                  className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
-                >
-                  <div>
-                    <div className="font-medium text-slate-700">{part.name}</div>
-                    <div className="text-xs text-slate-500">
-                      {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
-                    </div>
+              <>
+                {visibleLibraryParts.length === 0 ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                    No parts in this category.
                   </div>
-                  <div className="opacity-0 group-hover:opacity-100 text-blue-500">
-                    <Plus size={20} />
-                  </div>
-                </button>
-              ))
+                ) : (
+                  visibleLibraryParts.map((part) => (
+                    <button
+                      key={part.name}
+                      onClick={() => handleAddPart(part)}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+                    >
+                      <div>
+                        <div className="font-medium text-slate-700">{part.name}</div>
+                        <div className="text-xs text-slate-500">
+                          {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                        </div>
+                      </div>
+                      <div className="opacity-0 group-hover:opacity-100 text-blue-500">
+                        <Plus size={20} />
+                      </div>
+                    </button>
+                  ))
+                )}
+              </>
             )}
           </div>
         )}
