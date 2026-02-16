@@ -22,6 +22,7 @@ const COMMON_PARTS: PartTemplate[] = [
   { name: '2x6 Lumber', dimensions: [1.5, 5.5, 96], type: 'lumber', category: 'lumber', color: '#eecfa1' },
   { name: '2x8 Lumber', dimensions: [1.5, 7.25, 96], type: 'lumber', category: 'lumber', color: '#e6c08d' },
   { name: '4x4 Post', dimensions: [3.5, 3.5, 96], type: 'lumber', category: 'lumber', color: '#d4b483' },
+  { name: '1x2 Lumber', dimensions: [0.75, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f4d8b1' },
   { name: '1x2 Furring Strip', dimensions: [0.75, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f4d8b1' },
   { name: '1x4 Lumber', dimensions: [0.75, 3.5, 96], type: 'lumber', category: 'lumber', color: '#f5deb3' },
   { name: '1x6 Lumber', dimensions: [0.75, 5.5, 96], type: 'lumber', category: 'lumber', color: '#f2d39f' },
@@ -55,6 +56,8 @@ const LIBRARY_CATEGORY_META: { id: LibraryCategory | 'all'; label: string }[] = 
   { id: 'staining', label: 'Staining' },
 ];
 
+const STAIN_PRESET_STORAGE_KEY = 'woodworker_active_stain_preset';
+
 type StainPreset = {
   id: 'unstained' | 'natural' | 'golden-oak' | 'early-american' | 'dark-walnut' | 'ebony';
   label: string;
@@ -71,6 +74,15 @@ const STAIN_PRESETS: StainPreset[] = [
 ];
 
 const DEFAULT_PART_COLORS = new Map(COMMON_PARTS.map((part) => [part.name, part.color]));
+
+const getInitialStainPresetId = (): StainPreset['id'] => {
+  if (typeof window === 'undefined') return 'unstained';
+  const stored = window.localStorage.getItem(STAIN_PRESET_STORAGE_KEY);
+  if (stored && STAIN_PRESETS.some((preset) => preset.id === stored)) {
+    return stored as StainPreset['id'];
+  }
+  return 'unstained';
+};
 
 const getDefaultWoodColor = (part: PartData) => {
   const catalogColor = DEFAULT_PART_COLORS.get(part.name);
@@ -685,7 +697,7 @@ export const Sidebar: React.FC = () => {
   const [libraryCategory, setLibraryCategory] = useState<LibraryCategory | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>('unstained');
+  const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>(getInitialStainPresetId);
 
   useEffect(() => {
     if (selectedId) {
@@ -697,6 +709,11 @@ export const Sidebar: React.FC = () => {
   useEffect(() => {
     setCombineMessage(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STAIN_PRESET_STORAGE_KEY, activeStainPresetId);
+  }, [activeStainPresetId]);
 
   const applyGlobalStainPreset = (presetId: StainPreset['id']) => {
     const preset = STAIN_PRESETS.find((item) => item.id === presetId);

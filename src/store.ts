@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import * as THREE from 'three';
-import { PartData, ToolType } from './types';
+import { CutCorner, PartData, ToolType } from './types';
 
 const toQuaternion = (rotation: [number, number, number]) =>
   new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ'));
@@ -121,12 +121,14 @@ type ScrewPreset = {
   diameter: number;
 };
 
-const AUTO_SCREW_CONTACT_GAP_TOLERANCE = 0.45;
-const AUTO_SCREW_OVERLAP_MIN = 0.3;
+const AUTO_SCREW_CONTACT_GAP_TOLERANCE = 0.6;
+const AUTO_SCREW_OVERLAP_MIN = 0.08;
 const AUTO_SCREW_MIN_PENETRATION = 0.12;
 const AUTO_SCREW_REQUIRED_COUNT = 2;
-const AUTO_SCREW_MIN_DIR_ALIGNMENT = 0.22;
-const AUTO_SCREW_MAX_AXIS_OVERLAP = 0.55;
+const AUTO_SCREW_MIN_DIR_ALIGNMENT = 0.02;
+const AUTO_SCREW_MAX_AXIS_OVERLAP = 999;
+const AUTO_SCREW_PROFILE_EPS = 0.01;
+const AUTO_SCREW_HEAD_PROTRUSION = 0.06;
 const AUTO_SCREW_PRESETS: ScrewPreset[] = [
   { name: '#8 x 1-1/4" Wood Screw', length: 1.25, diameter: 0.164 },
   { name: '#10 x 2-1/2" Wood Screw', length: 2.5, diameter: 0.19 },
@@ -145,6 +147,151 @@ const buildOrientedFrame = (part: PartData): OrientedFrame => {
     ],
   };
 };
+
+const clampCut = (value: number, maxValue: number) => {
+  const minValue = Math.min(0.125, maxValue / 2);
+  const maxCut = Math.max(minValue, maxValue - minValue);
+  return Math.max(minValue, Math.min(value, maxCut));
+};
+
+const getLCutFootprintPoints = (
+  width: number,
+  depth: number,
+  cutWidth: number,
+  cutDepth: number,
+  corner: CutCorner
+): [number, number][] => {
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minZ = -depth / 2;
+  const maxZ = depth / 2;
+
+  if (corner === 'front-left') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX + cutWidth, maxZ],
+      [minX + cutWidth, maxZ - cutDepth],
+      [minX, maxZ - cutDepth],
+    ];
+  }
+  if (corner === 'front-right') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  if (corner === 'back-left') {
+    return [
+      [minX, minZ + cutDepth],
+      [minX + cutWidth, minZ + cutDepth],
+      [minX + cutWidth, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  return [
+    [minX, minZ],
+    [maxX - cutWidth, minZ],
+    [maxX - cutWidth, minZ + cutDepth],
+    [maxX, minZ + cutDepth],
+    [maxX, maxZ],
+    [minX, maxZ],
+  ];
+};
+
+const getPartFootprintPoints = (part: PartData): [number, number][] => {
+  const width = part.dimensions[0];
+  const depth = part.dimensions[2];
+  if (part.profile?.type === 'polygon' && part.profile.points && part.profile.points.length >= 3) {
+    return part.profile.points;
+  }
+  if (part.profile?.type === 'l-cut') {
+    const cutWidth = clampCut(part.profile.cutWidth ?? width / 2, width);
+    const cutDepth = clampCut(part.profile.cutDepth ?? depth / 2, depth);
+    const corner = part.profile.corner ?? 'front-left';
+    return getLCutFootprintPoints(width, depth, cutWidth, cutDepth, corner);
+  }
+  return [
+    [-width / 2, -depth / 2],
+    [width / 2, -depth / 2],
+    [width / 2, depth / 2],
+    [-width / 2, depth / 2],
+  ];
+};
+
+const isPointOnSegment2d = (
+  point: [number, number],
+  start: [number, number],
+  end: [number, number]
+) => {
+  const [px, pz] = point;
+  const [x1, z1] = start;
+  const [x2, z2] = end;
+  const cross = (px - x1) * (z2 - z1) - (pz - z1) * (x2 - x1);
+  if (Math.abs(cross) > AUTO_SCREW_PROFILE_EPS) {
+    return false;
+  }
+  const dot = (px - x1) * (px - x2) + (pz - z1) * (pz - z2);
+  return dot <= AUTO_SCREW_PROFILE_EPS;
+};
+
+const pointInPolygonOrOnEdge2d = (x: number, z: number, points: [number, number][]) => {
+  let inside = false;
+  const testPoint: [number, number] = [x, z];
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i];
+    const b = points[j];
+    if (isPointOnSegment2d(testPoint, a, b)) {
+      return true;
+    }
+
+    const xi = a[0];
+    const zi = a[1];
+    const xj = b[0];
+    const zj = b[1];
+    const intersects = ((zi > z) !== (zj > z))
+      && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || Number.EPSILON) + xi);
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+};
+
+const estimateScrewPenetrationLength = (
+  frame: OrientedFrame,
+  footprint: [number, number][],
+  screwCenter: THREE.Vector3,
+  screwDir: THREE.Vector3,
+  screwLength: number
+) => {
+  const sampleCount = 31;
+  let insideCount = 0;
+  const dir = screwDir.clone().normalize();
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const t = -screwLength / 2 + (i / (sampleCount - 1)) * screwLength;
+    const worldPoint = screwCenter.clone().addScaledVector(dir, t);
+    const [lx, ly, lz] = getLinePointCoordsInFrame(frame, worldPoint);
+    const insideY = Math.abs(ly) <= frame.half[1] + AUTO_SCREW_PROFILE_EPS;
+    if (!insideY) continue;
+    if (pointInPolygonOrOnEdge2d(lx, lz, footprint)) {
+      insideCount += 1;
+    }
+  }
+
+  return (insideCount / (sampleCount - 1)) * screwLength;
+};
+
+const getRequiredScrewPenetration = (screwLength: number) =>
+  Math.max(AUTO_SCREW_MIN_PENETRATION, Math.min(0.45, screwLength * 0.18));
 
 const getProjectionRadius = (frame: OrientedFrame, direction: THREE.Vector3) => {
   const dir = direction.clone().normalize();
@@ -239,28 +386,26 @@ const chooseScrewSegment = (
   firstLine: { start: number; end: number },
   secondLine: { start: number; end: number }
 ) => {
-  const overlapStart = Math.max(firstLine.start, secondLine.start);
-  const overlapEnd = Math.min(firstLine.end, secondLine.end);
-  const hasOverlap = overlapEnd > overlapStart;
-  const seamCenter = hasOverlap
-    ? (overlapStart + overlapEnd) / 2
-    : (
-        (firstLine.end < secondLine.start)
-          ? (firstLine.end + secondLine.start) / 2
-          : (secondLine.end + firstLine.start) / 2
-      );
+  const firstNearFace = firstLine.end;
+  const secondNearFace = secondLine.start;
+  const seamCenter = (firstNearFace + secondNearFace) / 2;
+  const gap = Math.abs(secondNearFace - firstNearFace);
+  const headProtrusion = AUTO_SCREW_HEAD_PROTRUSION;
+  const tipInset = 0.05;
 
-  const lengthCandidates = AUTO_SCREW_PRESETS.map((preset) => preset.length);
+  // Directional behavior:
+  // first piece = entry side (head side), second piece = destination side.
+  const entryStart = firstLine.start - headProtrusion;
+  const maxEndInsideSecond = secondLine.end - tipInset;
 
-  const centerOffsets = [0, -0.125, 0.125, -0.25, 0.25, -0.5, 0.5, -0.75, 0.75, -1, 1];
-  const centerCandidates = centerOffsets.map((offset) => seamCenter + offset);
-  if (hasOverlap) {
-    centerCandidates.push((firstLine.start + firstLine.end) / 2, (secondLine.start + secondLine.end) / 2);
+  if (maxEndInsideSecond - entryStart < AUTO_SCREW_MIN_PENETRATION * 2) {
+    return null;
   }
 
   let best:
     | {
         center: number;
+        seamCenter: number;
         preset: ScrewPreset;
         overlapFirst: number;
         overlapSecond: number;
@@ -268,36 +413,49 @@ const chooseScrewSegment = (
       }
     | null = null;
 
-  for (const center of centerCandidates) {
-    for (const length of lengthCandidates) {
-      const segmentStart = center - length / 2;
-      const segmentEnd = center + length / 2;
-      const overlapFirst = getIntervalOverlap(segmentStart, segmentEnd, firstLine.start, firstLine.end);
-      const overlapSecond = getIntervalOverlap(segmentStart, segmentEnd, secondLine.start, secondLine.end);
-      if (overlapFirst < AUTO_SCREW_MIN_PENETRATION || overlapSecond < AUTO_SCREW_MIN_PENETRATION) {
-        continue;
-      }
+  for (const preset of AUTO_SCREW_PRESETS) {
+    const requiredPenetration = getRequiredScrewPenetration(preset.length);
+    const segmentStart = entryStart;
+    const segmentEnd = segmentStart + preset.length;
 
-      const preset = AUTO_SCREW_PRESETS.find((item) => Math.abs(item.length - length) < 0.0001);
-      if (!preset) {
-        continue;
-      }
+    // Never allow the screw to exit the far side of the destination piece.
+    if (segmentEnd > maxEndInsideSecond + 1e-6) {
+      continue;
+    }
 
-      const score =
-        overlapFirst
-        + overlapSecond
-        - Math.abs(length - 2.5) * 0.06
-        - Math.abs(center - seamCenter) * 0.05;
+    const overlapFirst = getIntervalOverlap(segmentStart, segmentEnd, firstLine.start, firstLine.end);
+    const overlapSecond = getIntervalOverlap(segmentStart, segmentEnd, secondLine.start, secondLine.end);
+    if (overlapFirst < requiredPenetration || overlapSecond < requiredPenetration) {
+      continue;
+    }
 
-      if (!best || score > best.score) {
-        best = {
-          center,
-          preset,
-          overlapFirst,
-          overlapSecond,
-          score,
-        };
-      }
+    // Must cross from first into second around the seam.
+    if (!(segmentStart <= seamCenter + AUTO_SCREW_CONTACT_GAP_TOLERANCE && segmentEnd >= seamCenter - AUTO_SCREW_CONTACT_GAP_TOLERANCE)) {
+      continue;
+    }
+
+    const center = (segmentStart + segmentEnd) / 2;
+    const secondThickness = Math.max(0.001, secondLine.end - secondLine.start);
+    const targetSecondPenetration = Math.min(secondThickness - tipInset, Math.max(requiredPenetration, secondThickness * 0.72));
+    const secondPenetrationBias = Math.abs(overlapSecond - targetSecondPenetration);
+
+    const score =
+      overlapFirst
+      + overlapSecond * 1.35
+      - gap * 0.45
+      - secondPenetrationBias * 0.8
+      - Math.abs(preset.length - 2.5) * 0.05
+      - Math.abs(center - seamCenter) * 0.03;
+
+    if (!best || score > best.score) {
+      best = {
+        center,
+        seamCenter,
+        preset,
+        overlapFirst,
+        overlapSecond,
+        score,
+      };
     }
   }
 
@@ -309,6 +467,9 @@ const getSampleCoords = (min: number, max: number) => {
   const center = (min + max) / 2;
   const values = [center];
 
+  if (span >= 0.32) {
+    values.push(min + span * 0.25, max - span * 0.25);
+  }
   if (span >= 0.55) {
     values.push(min + span * 0.18, max - span * 0.18);
   }
@@ -378,6 +539,7 @@ const getDirectionCandidates = (
 ) => {
   const candidates: THREE.Vector3[] = [];
   const consume = (axis: THREE.Vector3) => {
+    if (axis.lengthSq() < 1e-8) return;
     const dir = axis.clone().normalize();
     if (centerDelta.dot(dir) < 0) {
       dir.multiplyScalar(-1);
@@ -627,6 +789,8 @@ export const useStore = create<AppState>((set) => ({
 
       const firstFrame = buildOrientedFrame(first);
       const secondFrame = buildOrientedFrame(second);
+      const firstFootprint = getPartFootprintPoints(first);
+      const secondFootprint = getPartFootprintPoints(second);
       const centerDelta = secondFrame.center.clone().sub(firstFrame.center);
       const centerDeltaLength = centerDelta.length();
       const centerDeltaDir = centerDeltaLength > 0.0001
@@ -653,7 +817,7 @@ export const useStore = create<AppState>((set) => ({
       let foundSharedProjection = false;
 
       for (const dir of directionCandidates) {
-        const dirAlignment = centerDeltaDir ? Math.abs(dir.dot(centerDeltaDir)) : 1;
+        const dirAlignment = centerDeltaDir ? dir.dot(centerDeltaDir) : 1;
         if (dirAlignment < AUTO_SCREW_MIN_DIR_ALIGNMENT) {
           continue;
         }
@@ -737,6 +901,27 @@ export const useStore = create<AppState>((set) => ({
               }
 
               const screwCenter = linePoint.clone().addScaledVector(basis.dir, chosenSegment.center);
+              const requiredPenetration = getRequiredScrewPenetration(chosenSegment.preset.length);
+              const penetrationFirst = estimateScrewPenetrationLength(
+                firstFrame,
+                firstFootprint,
+                screwCenter,
+                basis.dir,
+                chosenSegment.preset.length
+              );
+              const penetrationSecond = estimateScrewPenetrationLength(
+                secondFrame,
+                secondFootprint,
+                screwCenter,
+                basis.dir,
+                chosenSegment.preset.length
+              );
+              if (
+                penetrationFirst < requiredPenetration
+                || penetrationSecond < requiredPenetration
+              ) {
+                continue;
+              }
               const edgeMargin = Math.min(
                 uVal - uFirst.min,
                 uFirst.max - uVal,
@@ -754,6 +939,7 @@ export const useStore = create<AppState>((set) => ({
                 Math.abs(uVal - (overlapUMin + overlapUMax) / 2)
                 + Math.abs(vVal - (overlapVMin + overlapVMax) / 2);
               const edgeBonus = Math.max(0, Math.min(0.4, edgeMargin - minEdgeClearance));
+              const seamOffset = Math.abs(chosenSegment.center - chosenSegment.seamCenter);
 
               possiblePlacements.push({
                 center: screwCenter,
@@ -761,7 +947,15 @@ export const useStore = create<AppState>((set) => ({
                 u: uVal,
                 v: vVal,
                 edgeMargin,
-                score: chosenSegment.overlapFirst + chosenSegment.overlapSecond - lineGap * 1.75 - centerBias * 0.06 + edgeBonus * 0.8,
+                score:
+                  chosenSegment.overlapFirst
+                  + chosenSegment.overlapSecond
+                  + penetrationFirst
+                  + penetrationSecond
+                  - lineGap * 1.75
+                  - seamOffset * 0.2
+                  - centerBias * 0.06
+                  + edgeBonus * 0.8,
               });
             }
           }
@@ -826,8 +1020,11 @@ export const useStore = create<AppState>((set) => ({
           }));
 
           if (!bestPlan || bestPair.pairScore > bestPlan.score) {
+            const preferredAxisBias = Math.max(
+              ...firstFrame.axes.map((axis) => Math.abs(axis.dot(basis.dir)))
+            );
             bestPlan = {
-              score: bestPair.pairScore,
+              score: bestPair.pairScore + preferredAxisBias * 0.3,
               screws: planScrews,
             };
           }
@@ -838,7 +1035,7 @@ export const useStore = create<AppState>((set) => ({
         if (!foundTouchingDirection) {
           result = {
             ok: false,
-            message: 'Selected pieces need to be touching (or very close).',
+            message: 'Selected pieces need to overlap/touch (or be very close).',
             screwCount: 0,
           };
           return {};
@@ -856,6 +1053,56 @@ export const useStore = create<AppState>((set) => ({
         result = {
           ok: false,
           message: 'Could not place 2 screws that intersect both selected pieces.',
+          screwCount: 0,
+        };
+        return {};
+      }
+
+      const screwsActuallyConnect = bestPlan.screws.every((screw) => {
+        const screwCenter = new THREE.Vector3(...screw.position);
+        const screwDir = new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(toQuaternion(screw.rotation))
+          .normalize();
+        const screwLength = screw.dimensions[1];
+        const requiredPenetration = getRequiredScrewPenetration(screwLength);
+
+        const firstLine = intersectLineWithFrame(firstFrame, screwCenter, screwDir, 0.002);
+        const secondLine = intersectLineWithFrame(secondFrame, screwCenter, screwDir, 0.002);
+        if (!firstLine || !secondLine) {
+          return false;
+        }
+        const segStart = -screwLength / 2;
+        const segEnd = screwLength / 2;
+        const overlapFirstLine = getIntervalOverlap(segStart, segEnd, firstLine.start, firstLine.end);
+        const overlapSecondLine = getIntervalOverlap(segStart, segEnd, secondLine.start, secondLine.end);
+        if (overlapFirstLine < requiredPenetration || overlapSecondLine < requiredPenetration) {
+          return false;
+        }
+
+        const penetrationFirst = estimateScrewPenetrationLength(
+          firstFrame,
+          firstFootprint,
+          screwCenter,
+          screwDir,
+          screwLength
+        );
+        const penetrationSecond = estimateScrewPenetrationLength(
+          secondFrame,
+          secondFootprint,
+          screwCenter,
+          screwDir,
+          screwLength
+        );
+        return (
+          penetrationFirst >= requiredPenetration
+          && penetrationSecond >= requiredPenetration
+        );
+      });
+
+      if (!screwsActuallyConnect) {
+        result = {
+          ok: false,
+          message: 'Could not place screws that cleanly intersect both selected pieces.',
           screwCount: 0,
         };
         return {};

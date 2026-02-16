@@ -1,12 +1,590 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb, Scissors } from 'lucide-react';
+import { CutCorner, PartData } from '../types';
+import * as THREE from 'three';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
   const safe = trimmed.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-');
   const normalized = safe || 'wood-design';
   return normalized.endsWith('.json') ? normalized : `${normalized}.json`;
+};
+
+type Point2 = [number, number];
+type FootprintBounds = { xmin: number; xmax: number; zmin: number; zmax: number };
+type BoundarySegment = { start: Point2; end: Point2 };
+type Cell = { x0: number; x1: number; z0: number; z1: number; covered: boolean; insideSelected: boolean };
+type FootprintPolygon = { points: Point2[]; bounds: FootprintBounds };
+type AxisAlignedBounds3 = {
+  xmin: number;
+  xmax: number;
+  ymin: number;
+  ymax: number;
+  zmin: number;
+  zmax: number;
+};
+type OrientedFrame = {
+  center: THREE.Vector3;
+  half: [number, number, number];
+  axes: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
+};
+
+const OVERLAP_EPS = 0.01;
+
+const approxEqual = (a: number, b: number, epsilon = OVERLAP_EPS) => Math.abs(a - b) <= epsilon;
+
+const clampCutValue = (value: number, maxValue: number) => {
+  const minValue = Math.min(0.125, maxValue / 2);
+  const safeMax = Math.max(minValue, maxValue - minValue);
+  return Math.max(minValue, Math.min(value, safeMax));
+};
+
+const getLCutPoints = (
+  width: number,
+  depth: number,
+  cutWidth: number,
+  cutDepth: number,
+  corner: CutCorner
+): Point2[] => {
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minZ = -depth / 2;
+  const maxZ = depth / 2;
+
+  if (corner === 'front-left') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX + cutWidth, maxZ],
+      [minX + cutWidth, maxZ - cutDepth],
+      [minX, maxZ - cutDepth],
+    ];
+  }
+  if (corner === 'front-right') {
+    return [
+      [minX, minZ],
+      [maxX, minZ],
+      [maxX, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ - cutDepth],
+      [maxX - cutWidth, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  if (corner === 'back-left') {
+    return [
+      [minX, minZ + cutDepth],
+      [minX + cutWidth, minZ + cutDepth],
+      [minX + cutWidth, minZ],
+      [maxX, minZ],
+      [maxX, maxZ],
+      [minX, maxZ],
+    ];
+  }
+  return [
+    [minX, minZ],
+    [maxX - cutWidth, minZ],
+    [maxX - cutWidth, minZ + cutDepth],
+    [maxX, minZ + cutDepth],
+    [maxX, maxZ],
+    [minX, maxZ],
+  ];
+};
+
+const getLocalFootprintPoints = (part: PartData): Point2[] => {
+  const width = part.dimensions[0];
+  const depth = part.dimensions[2];
+
+  if (part.profile?.type === 'polygon' && part.profile.points && part.profile.points.length >= 3) {
+    return part.profile.points;
+  }
+
+  if (part.profile?.type === 'l-cut') {
+    const cutWidth = clampCutValue(part.profile.cutWidth ?? width / 2, width);
+    const cutDepth = clampCutValue(part.profile.cutDepth ?? depth / 2, depth);
+    const corner = part.profile.corner ?? 'front-left';
+    return getLCutPoints(width, depth, cutWidth, cutDepth, corner);
+  }
+
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minZ = -depth / 2;
+  const maxZ = depth / 2;
+  return [
+    [minX, minZ],
+    [maxX, minZ],
+    [maxX, maxZ],
+    [minX, maxZ],
+  ];
+};
+
+const getLocalFootprintBounds = (points: Point2[]): FootprintBounds => ({
+  xmin: Math.min(...points.map(([x]) => x)),
+  xmax: Math.max(...points.map(([x]) => x)),
+  zmin: Math.min(...points.map(([, z]) => z)),
+  zmax: Math.max(...points.map(([, z]) => z)),
+});
+
+const buildOrientedFrame = (part: PartData): OrientedFrame => {
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(part.rotation[0], part.rotation[1], part.rotation[2], 'XYZ')
+  );
+  return {
+    center: new THREE.Vector3(...part.position),
+    half: [part.dimensions[0] / 2, part.dimensions[1] / 2, part.dimensions[2] / 2],
+    axes: [
+      new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize(),
+      new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion).normalize(),
+      new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize(),
+    ],
+  };
+};
+
+const toFrameLocal = (frame: OrientedFrame, worldPoint: THREE.Vector3) => {
+  const delta = worldPoint.clone().sub(frame.center);
+  return new THREE.Vector3(
+    delta.dot(frame.axes[0]),
+    delta.dot(frame.axes[1]),
+    delta.dot(frame.axes[2])
+  );
+};
+
+const intersectLineWithFrame = (
+  frame: OrientedFrame,
+  linePoint: THREE.Vector3,
+  lineDir: THREE.Vector3,
+  tolerance = OVERLAP_EPS
+) => {
+  const localPoint = toFrameLocal(frame, linePoint);
+  const localDir = new THREE.Vector3(
+    lineDir.dot(frame.axes[0]),
+    lineDir.dot(frame.axes[1]),
+    lineDir.dot(frame.axes[2])
+  );
+
+  let tMin = -Infinity;
+  let tMax = Infinity;
+  const half = frame.half;
+
+  const pArr = [localPoint.x, localPoint.y, localPoint.z] as const;
+  const dArr = [localDir.x, localDir.y, localDir.z] as const;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const p = pArr[axis];
+    const d = dArr[axis];
+    const h = half[axis] + tolerance;
+
+    if (Math.abs(d) < 1e-6) {
+      if (Math.abs(p) > h) return null;
+      continue;
+    }
+
+    const t1 = (-h - p) / d;
+    const t2 = (h - p) / d;
+    const enter = Math.min(t1, t2);
+    const exit = Math.max(t1, t2);
+    tMin = Math.max(tMin, enter);
+    tMax = Math.min(tMax, exit);
+    if (tMin > tMax) return null;
+  }
+
+  return { start: tMin, end: tMax };
+};
+
+const getWorldCorners = (frame: OrientedFrame) => {
+  const [hx, hy, hz] = frame.half;
+  const corners: THREE.Vector3[] = [];
+  const signs = [-1, 1];
+  for (const sx of signs) {
+    for (const sy of signs) {
+      for (const sz of signs) {
+        const corner = frame.center.clone()
+          .add(frame.axes[0].clone().multiplyScalar(sx * hx))
+          .add(frame.axes[1].clone().multiplyScalar(sy * hy))
+          .add(frame.axes[2].clone().multiplyScalar(sz * hz));
+        corners.push(corner);
+      }
+    }
+  }
+  return corners;
+};
+
+const getFrameAabb = (frame: OrientedFrame): AxisAlignedBounds3 => {
+  const corners = getWorldCorners(frame);
+  return {
+    xmin: Math.min(...corners.map((c) => c.x)),
+    xmax: Math.max(...corners.map((c) => c.x)),
+    ymin: Math.min(...corners.map((c) => c.y)),
+    ymax: Math.max(...corners.map((c) => c.y)),
+    zmin: Math.min(...corners.map((c) => c.z)),
+    zmax: Math.max(...corners.map((c) => c.z)),
+  };
+};
+
+const aabb3Overlaps = (a: AxisAlignedBounds3, b: AxisAlignedBounds3) => !(
+  a.xmax < b.xmin - OVERLAP_EPS
+  || b.xmax < a.xmin - OVERLAP_EPS
+  || a.ymax < b.ymin - OVERLAP_EPS
+  || b.ymax < a.ymin - OVERLAP_EPS
+  || a.zmax < b.zmin - OVERLAP_EPS
+  || b.zmax < a.zmin - OVERLAP_EPS
+);
+
+const isPointOnSegment = (point: Point2, start: Point2, end: Point2) => {
+  const [px, pz] = point;
+  const [x1, z1] = start;
+  const [x2, z2] = end;
+  const cross = (px - x1) * (z2 - z1) - (pz - z1) * (x2 - x1);
+  if (Math.abs(cross) > OVERLAP_EPS) return false;
+  const dot = (px - x1) * (px - x2) + (pz - z1) * (pz - z2);
+  return dot <= OVERLAP_EPS;
+};
+
+const pointInPolygonOrOnEdge = (x: number, z: number, points: Point2[]) => {
+  let inside = false;
+  const testPoint: Point2 = [x, z];
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i];
+    const b = points[j];
+    if (isPointOnSegment(testPoint, a, b)) return true;
+
+    const xi = a[0];
+    const zi = a[1];
+    const xj = b[0];
+    const zj = b[1];
+    const intersects = ((zi > z) !== (zj > z))
+      && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || Number.EPSILON) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+};
+
+const uniqueSorted = (values: number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const unique: number[] = [];
+  sorted.forEach((value) => {
+    if (unique.length === 0 || Math.abs(unique[unique.length - 1] - value) > OVERLAP_EPS) {
+      unique.push(value);
+    }
+  });
+  return unique;
+};
+
+const pointKey = (point: Point2) => `${point[0].toFixed(6)}:${point[1].toFixed(6)}`;
+
+const signedPolygonArea = (points: Point2[]) => {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return area / 2;
+};
+
+const simplifyOrthogonalLoop = (points: Point2[]) => {
+  if (points.length <= 3) return points;
+  let simplified = [...points];
+  let changed = true;
+  while (changed && simplified.length > 3) {
+    changed = false;
+    const next: Point2[] = [];
+    for (let i = 0; i < simplified.length; i += 1) {
+      const prev = simplified[(i - 1 + simplified.length) % simplified.length];
+      const curr = simplified[i];
+      const nextPoint = simplified[(i + 1) % simplified.length];
+      const duplicateOfPrev = approxEqual(curr[0], prev[0]) && approxEqual(curr[1], prev[1]);
+      const collinearX = approxEqual(prev[0], curr[0]) && approxEqual(curr[0], nextPoint[0]);
+      const collinearZ = approxEqual(prev[1], curr[1]) && approxEqual(curr[1], nextPoint[1]);
+      if (duplicateOfPrev || collinearX || collinearZ) {
+        changed = true;
+        continue;
+      }
+      next.push(curr);
+    }
+    simplified = next.length >= 3 ? next : simplified;
+  }
+  return simplified;
+};
+
+const traceUnionBoundary = (xs: number[], zs: number[], coveredMatrix: boolean[][]) => {
+  const nx = xs.length - 1;
+  const nz = zs.length - 1;
+  const segments: BoundarySegment[] = [];
+
+  for (let xi = 0; xi < nx; xi += 1) {
+    for (let zi = 0; zi < nz; zi += 1) {
+      if (!coveredMatrix[xi][zi]) continue;
+      const x0 = xs[xi];
+      const x1 = xs[xi + 1];
+      const z0 = zs[zi];
+      const z1 = zs[zi + 1];
+
+      if (zi === 0 || !coveredMatrix[xi][zi - 1]) segments.push({ start: [x0, z0], end: [x1, z0] });
+      if (xi === nx - 1 || !coveredMatrix[xi + 1][zi]) segments.push({ start: [x1, z0], end: [x1, z1] });
+      if (zi === nz - 1 || !coveredMatrix[xi][zi + 1]) segments.push({ start: [x1, z1], end: [x0, z1] });
+      if (xi === 0 || !coveredMatrix[xi - 1][zi]) segments.push({ start: [x0, z1], end: [x0, z0] });
+    }
+  }
+
+  if (segments.length === 0) return null;
+
+  const startMap = new Map<string, number[]>();
+  segments.forEach((segment, index) => {
+    const key = pointKey(segment.start);
+    const entries = startMap.get(key) ?? [];
+    entries.push(index);
+    startMap.set(key, entries);
+  });
+
+  const visited = new Set<number>();
+  const loops: Point2[][] = [];
+
+  for (let i = 0; i < segments.length; i += 1) {
+    if (visited.has(i)) continue;
+    const loop: Point2[] = [];
+    let currentIndex = i;
+    let guard = 0;
+
+    while (!visited.has(currentIndex)) {
+      visited.add(currentIndex);
+      const segment = segments[currentIndex];
+      if (loop.length === 0) loop.push(segment.start);
+      loop.push(segment.end);
+
+      const endKey = pointKey(segment.end);
+      if (endKey === pointKey(loop[0])) break;
+
+      const nextCandidates = (startMap.get(endKey) ?? []).filter((candidate) => !visited.has(candidate));
+      if (nextCandidates.length === 0) return null;
+      [currentIndex] = nextCandidates;
+      guard += 1;
+      if (guard > segments.length + 4) return null;
+    }
+
+    if (loop.length >= 4) {
+      loop.pop();
+      const simplified = simplifyOrthogonalLoop(loop);
+      if (simplified.length >= 3) loops.push(simplified);
+    }
+  }
+
+  if (loops.length !== 1) return null;
+  const outer = loops[0];
+  const area = signedPolygonArea(outer);
+  if (Math.abs(area) <= OVERLAP_EPS) return null;
+  return area < 0 ? [...outer].reverse() : outer;
+};
+
+const columnOverlapsCutter = (
+  selectedFrame: OrientedFrame,
+  linePoint: THREE.Vector3,
+  cutterFrame: OrientedFrame,
+  cutterFootprint: Point2[]
+) => {
+  const interval = intersectLineWithFrame(cutterFrame, linePoint, selectedFrame.axes[1], OVERLAP_EPS);
+  if (!interval) return false;
+
+  const selectedStart = -selectedFrame.half[1];
+  const selectedEnd = selectedFrame.half[1];
+  const overlapStart = Math.max(interval.start, selectedStart);
+  const overlapEnd = Math.min(interval.end, selectedEnd);
+  if (overlapEnd - overlapStart <= OVERLAP_EPS) return false;
+
+  const sampleCount = 9;
+  for (let i = 0; i < sampleCount; i += 1) {
+    const t = overlapStart + ((overlapEnd - overlapStart) * i) / (sampleCount - 1);
+    const worldPoint = linePoint.clone().add(selectedFrame.axes[1].clone().multiplyScalar(t));
+    const cutterLocal = toFrameLocal(cutterFrame, worldPoint);
+    if (Math.abs(cutterLocal.y) > cutterFrame.half[1] + OVERLAP_EPS) continue;
+    if (pointInPolygonOrOnEdge(cutterLocal.x, cutterLocal.z, cutterFootprint)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const analyzeTrimmedFootprint = (selectedPart: PartData, cutterParts: PartData[]) => {
+  const selectedFrame = buildOrientedFrame(selectedPart);
+  const selectedFootprintPoints = getLocalFootprintPoints(selectedPart);
+  const selected: FootprintPolygon = {
+    points: selectedFootprintPoints,
+    bounds: getLocalFootprintBounds(selectedFootprintPoints),
+  };
+
+  const selectedAabb = getFrameAabb(selectedFrame);
+  const cutters = cutterParts
+    .map((part) => ({
+      part,
+      frame: buildOrientedFrame(part),
+      footprint: getLocalFootprintPoints(part),
+    }))
+    .filter((item) => aabb3Overlaps(selectedAabb, getFrameAabb(item.frame)));
+
+  if (cutters.length === 0) {
+    return { ok: false as const, message: 'No overlapping wood/sheet pieces were found to trim against.' };
+  }
+
+  const projectedCorners = cutters.flatMap((item) =>
+    getWorldCorners(item.frame).map((corner) => toFrameLocal(selectedFrame, corner))
+  );
+
+  const xs = uniqueSorted([
+    selected.bounds.xmin,
+    selected.bounds.xmax,
+    ...selected.points.map(([x]) => x),
+    ...projectedCorners.map((corner) => corner.x),
+  ]);
+  const zs = uniqueSorted([
+    selected.bounds.zmin,
+    selected.bounds.zmax,
+    ...selected.points.map(([, z]) => z),
+    ...projectedCorners.map((corner) => corner.z),
+  ]);
+
+  const nx = xs.length - 1;
+  const nz = zs.length - 1;
+  if (nx <= 0 || nz <= 0) return { ok: false as const, message: 'Failed to analyze overlap region.' };
+
+  const coveredMatrix = Array.from({ length: nx }, () => Array.from({ length: nz }, () => false));
+  const cells: Cell[] = [];
+  let removedArea = 0;
+
+  for (let xi = 0; xi < nx; xi += 1) {
+    for (let zi = 0; zi < nz; zi += 1) {
+      const x0 = xs[xi];
+      const x1 = xs[xi + 1];
+      const z0 = zs[zi];
+      const z1 = zs[zi + 1];
+      const area = (x1 - x0) * (z1 - z0);
+      if (area <= OVERLAP_EPS * OVERLAP_EPS) continue;
+
+      const cx = (x0 + x1) / 2;
+      const cz = (z0 + z1) / 2;
+      const insideSelected = pointInPolygonOrOnEdge(cx, cz, selected.points);
+      if (!insideSelected) {
+        cells.push({ x0, x1, z0, z1, covered: false, insideSelected: false });
+        continue;
+      }
+
+      const linePoint = selectedFrame.center.clone()
+        .add(selectedFrame.axes[0].clone().multiplyScalar(cx))
+        .add(selectedFrame.axes[2].clone().multiplyScalar(cz));
+
+      const blockedByOther = cutters.some((cutter) =>
+        columnOverlapsCutter(selectedFrame, linePoint, cutter.frame, cutter.footprint)
+      );
+      const covered = insideSelected && !blockedByOther;
+      coveredMatrix[xi][zi] = covered;
+      if (insideSelected && blockedByOther) removedArea += area;
+      cells.push({ x0, x1, z0, z1, covered, insideSelected: true });
+    }
+  }
+
+  if (removedArea <= OVERLAP_EPS * OVERLAP_EPS) {
+    return { ok: false as const, message: 'No overlapping area found to trim on the selected piece.' };
+  }
+
+  const keptCells = cells.filter((cell) => cell.covered);
+  if (keptCells.length === 0) {
+    return { ok: false as const, message: 'Trim would remove the entire selected piece, so nothing was changed.' };
+  }
+
+  const bounds = {
+    xmin: Math.min(...keptCells.map((cell) => cell.x0)),
+    xmax: Math.max(...keptCells.map((cell) => cell.x1)),
+    zmin: Math.min(...keptCells.map((cell) => cell.z0)),
+    zmax: Math.max(...keptCells.map((cell) => cell.z1)),
+  };
+  const bboxWidth = bounds.xmax - bounds.xmin;
+  const bboxDepth = bounds.zmax - bounds.zmin;
+  const bboxArea = bboxWidth * bboxDepth;
+  const keptArea = keptCells.reduce((sum, cell) => sum + (cell.x1 - cell.x0) * (cell.z1 - cell.z0), 0);
+
+  if (Math.abs(bboxArea - keptArea) <= OVERLAP_EPS) {
+    return {
+      ok: true as const,
+      bounds,
+      profile: { type: 'rect' as const },
+      removedArea,
+    };
+  }
+
+  const cellsInsideBounds = cells.filter((cell) =>
+    cell.insideSelected
+    &&
+    cell.x0 >= bounds.xmin - OVERLAP_EPS
+    && cell.x1 <= bounds.xmax + OVERLAP_EPS
+    && cell.z0 >= bounds.zmin - OVERLAP_EPS
+    && cell.z1 <= bounds.zmax + OVERLAP_EPS
+  );
+  const missingCells = cellsInsideBounds.filter((cell) => !cell.covered);
+
+  if (missingCells.length > 0) {
+    const missingBounds = {
+      xmin: Math.min(...missingCells.map((cell) => cell.x0)),
+      xmax: Math.max(...missingCells.map((cell) => cell.x1)),
+      zmin: Math.min(...missingCells.map((cell) => cell.z0)),
+      zmax: Math.max(...missingCells.map((cell) => cell.z1)),
+    };
+    const missingArea = missingCells.reduce((sum, cell) => sum + (cell.x1 - cell.x0) * (cell.z1 - cell.z0), 0);
+    const expectedMissingArea = (missingBounds.xmax - missingBounds.xmin) * (missingBounds.zmax - missingBounds.zmin);
+    const missingIsAxisAlignedRectangle = Math.abs(missingArea - expectedMissingArea) <= OVERLAP_EPS;
+    const missingIsContiguousRectangle = missingIsAxisAlignedRectangle && cellsInsideBounds.every((cell) => {
+      const insideMissing =
+        cell.x0 >= missingBounds.xmin - OVERLAP_EPS
+        && cell.x1 <= missingBounds.xmax + OVERLAP_EPS
+        && cell.z0 >= missingBounds.zmin - OVERLAP_EPS
+        && cell.z1 <= missingBounds.zmax + OVERLAP_EPS;
+      if (insideMissing) return !cell.covered;
+      return cell.covered;
+    });
+
+    if (missingIsContiguousRectangle) {
+      const touchesLeft = approxEqual(missingBounds.xmin, bounds.xmin);
+      const touchesRight = approxEqual(missingBounds.xmax, bounds.xmax);
+      const touchesBack = approxEqual(missingBounds.zmin, bounds.zmin);
+      const touchesFront = approxEqual(missingBounds.zmax, bounds.zmax);
+      let corner: CutCorner | null = null;
+      if (touchesLeft && touchesFront) corner = 'front-left';
+      if (touchesRight && touchesFront) corner = 'front-right';
+      if (touchesLeft && touchesBack) corner = 'back-left';
+      if (touchesRight && touchesBack) corner = 'back-right';
+
+      if (corner) {
+        const cutWidth = missingBounds.xmax - missingBounds.xmin;
+        const cutDepth = missingBounds.zmax - missingBounds.zmin;
+        if (cutWidth > OVERLAP_EPS && cutDepth > OVERLAP_EPS) {
+          return {
+            ok: true as const,
+            bounds,
+            profile: { type: 'l-cut' as const, cutWidth, cutDepth, corner },
+            removedArea,
+          };
+        }
+      }
+    }
+  }
+
+  const boundary = traceUnionBoundary(xs, zs, coveredMatrix);
+  if (!boundary || boundary.length < 3) {
+    return {
+      ok: false as const,
+      message: 'Trim result is not a single clean footprint. Try trimming in smaller steps.',
+    };
+  }
+
+  const centerX = (bounds.xmin + bounds.xmax) / 2;
+  const centerZ = (bounds.zmin + bounds.zmax) / 2;
+  const localPoints = boundary.map(([x, z]) => [x - centerX, z - centerZ] as [number, number]);
+
+  return {
+    ok: true as const,
+    bounds,
+    profile: { type: 'polygon' as const, points: localPoints },
+    removedArea,
+  };
 };
 
 export const Toolbar: React.FC = () => {
@@ -169,6 +747,61 @@ export const Toolbar: React.FC = () => {
     setAutoScrewFirstId(null);
     setAutoScrewStatus(null);
     autoScrewLastHandledSelectionRef.current = null;
+  };
+
+  const handleTrimOverlaps = () => {
+    if (!selectedPart) {
+      alert('Select a wood or sheet piece first.');
+      return;
+    }
+
+    if (selectedPart.type === 'hardware') {
+      alert('Trim Overlaps only works on wood or sheet pieces.');
+      return;
+    }
+
+    const cutterParts = parts.filter((part) => {
+      if (part.id === selectedPart.id) return false;
+      if (part.type === 'hardware') return false;
+      return true;
+    });
+
+    const trimmed = analyzeTrimmedFootprint(selectedPart, cutterParts);
+    if (!trimmed.ok) {
+      alert(trimmed.message);
+      return;
+    }
+
+    const newWidth = trimmed.bounds.xmax - trimmed.bounds.xmin;
+    const newDepth = trimmed.bounds.zmax - trimmed.bounds.zmin;
+    if (newWidth <= OVERLAP_EPS || newDepth <= OVERLAP_EPS) {
+      alert('Trim result is too small to keep. No changes were applied.');
+      return;
+    }
+
+    const selectedFrame = buildOrientedFrame(selectedPart);
+    const localCenter = new THREE.Vector3(
+      (trimmed.bounds.xmin + trimmed.bounds.xmax) / 2,
+      0,
+      (trimmed.bounds.zmin + trimmed.bounds.zmax) / 2
+    );
+    const worldCenter = selectedFrame.center.clone()
+      .add(selectedFrame.axes[0].clone().multiplyScalar(localCenter.x))
+      .add(selectedFrame.axes[2].clone().multiplyScalar(localCenter.z));
+
+    const updatedPart: PartData = {
+      ...selectedPart,
+      dimensions: [newWidth, selectedPart.dimensions[1], newDepth],
+      position: [
+        worldCenter.x,
+        worldCenter.y,
+        worldCenter.z,
+      ],
+      profile: trimmed.profile,
+    };
+
+    setParts(parts.map((part) => (part.id === selectedPart.id ? updatedPart : part)));
+    setIsSpecialMenuOpen(false);
   };
 
   const handleConfirmExport = () => {
@@ -378,6 +1011,17 @@ export const Toolbar: React.FC = () => {
                   Auto Screw
                 </span>
                 {tool === 'auto-screw' && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <button
+                onClick={handleTrimOverlaps}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Scissors size={16} />
+                  Trim Overlaps
+                </span>
               </button>
 
               <button
