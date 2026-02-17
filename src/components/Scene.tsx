@@ -139,6 +139,8 @@ export const Scene: React.FC = () => {
     floorEnabled,
     shadowsEnabled,
     structuralOverlayEnabled,
+    stressScenario,
+    stressIntensity,
     cameraFocusRequest,
   } = useStore();
   const blurActiveInput = () => {
@@ -166,7 +168,10 @@ export const Scene: React.FC = () => {
     return [sum[0] / parts.length, sum[1] / parts.length, sum[2] / parts.length];
   }, [parts]);
 
-  const structuralReport = useMemo(() => analyzeStructuralIntegrity(parts), [parts, structuralOverlayEnabled]);
+  const structuralReport = useMemo(
+    () => analyzeStructuralIntegrity(parts, { stressScenario, stressIntensity }),
+    [parts, structuralOverlayEnabled, stressIntensity, stressScenario]
+  );
 
   const handleMissed = () => {
     selectPart(null);

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import * as THREE from 'three';
 import { CutCorner, PartData, ToolType } from './types';
+import type { StressScenario } from './structuralAnalysis';
 
 const toQuaternion = (rotation: [number, number, number]) =>
   new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ'));
@@ -630,6 +631,10 @@ interface AppState {
   toggleShadows: () => void;
   structuralOverlayEnabled: boolean;
   toggleStructuralOverlay: () => void;
+  stressScenario: StressScenario;
+  setStressScenario: (scenario: StressScenario) => void;
+  stressIntensity: number;
+  setStressIntensity: (value: number) => void;
   requestCameraFocus: () => void;
   setExplodeFactor: (value: number) => void;
 }
@@ -648,6 +653,8 @@ export const useStore = create<AppState>((set) => ({
   floorEnabled: false,
   shadowsEnabled: false,
   structuralOverlayEnabled: false,
+  stressScenario: 'baseline',
+  stressIntensity: 0.6,
 
   addPart: (part) => set((state) =>
     withHistory(state, [...state.parts, part], {
@@ -1224,6 +1231,10 @@ export const useStore = create<AppState>((set) => ({
   toggleShadows: () => set((state) => ({ shadowsEnabled: !state.shadowsEnabled })),
 
   toggleStructuralOverlay: () => set((state) => ({ structuralOverlayEnabled: !state.structuralOverlayEnabled })),
+
+  setStressScenario: (scenario) => set({ stressScenario: scenario }),
+
+  setStressIntensity: (value) => set({ stressIntensity: Math.max(0, Math.min(1, value)) }),
 
   requestCameraFocus: () => set((state) => ({ cameraFocusRequest: state.cameraFocusRequest + 1 })),
 

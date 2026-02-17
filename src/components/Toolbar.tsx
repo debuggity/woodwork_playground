@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2 } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2, ArrowDown, MoveHorizontal, Zap } from 'lucide-react';
 import { CutCorner, PartData } from '../types';
 import * as THREE from 'three';
-import { analyzeStructuralIntegrity } from '../structuralAnalysis';
+import { analyzeStructuralIntegrity, STRESS_SCENARIO_OPTIONS } from '../structuralAnalysis';
+import type { StressScenario } from '../structuralAnalysis';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -613,6 +614,10 @@ export const Toolbar: React.FC = () => {
     toggleShadows,
     structuralOverlayEnabled,
     toggleStructuralOverlay,
+    stressScenario,
+    setStressScenario,
+    stressIntensity,
+    setStressIntensity,
     requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
@@ -635,13 +640,27 @@ export const Toolbar: React.FC = () => {
   const autoScrewFirstPart = autoScrewFirstId ? parts.find((part) => part.id === autoScrewFirstId) : null;
   const canUndo = pastParts.length > 0;
   const canRedo = futureParts.length > 0;
-  const structuralReport = useMemo(() => analyzeStructuralIntegrity(parts), [parts, structuralOverlayEnabled]);
+  const structuralReport = useMemo(
+    () => analyzeStructuralIntegrity(parts, { stressScenario, stressIntensity }),
+    [parts, stressIntensity, stressScenario, structuralOverlayEnabled]
+  );
   const structuralPercent = Math.round(structuralReport.overallScore * 100);
-  const gradeToneClass = structuralReport.overallScore >= 0.82
+  const stressPercent = Math.round(structuralReport.stress.score * 100);
+  const stressGradeToneClass = structuralReport.stress.score >= 0.82
     ? 'text-emerald-300'
-    : structuralReport.overallScore >= 0.65
+    : structuralReport.stress.score >= 0.65
       ? 'text-amber-300'
       : 'text-rose-300';
+  const activeStressRecommendation = stressScenario === 'baseline'
+    ? structuralReport.recommendation
+    : structuralReport.stress.recommendation;
+  const getStressIcon = (scenarioId: StressScenario) => {
+    if (scenarioId === 'vertical-load') return <ArrowDown size={12} />;
+    if (scenarioId === 'lateral-rack') return <MoveHorizontal size={12} />;
+    if (scenarioId === 'torsion-twist') return <RotateCcw size={12} />;
+    if (scenarioId === 'impact-burst') return <Zap size={12} />;
+    return <ActivitySquare size={12} />;
+  };
   const selectedHinge = selectedPart?.hardwareKind === 'hinge' ? selectedPart : null;
   const hingeRangeRad = (() => {
     const defaultMin = (-110 * Math.PI) / 180;
@@ -1115,7 +1134,7 @@ export const Toolbar: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
                         <Shield size={12} />
-                        Structural Scan
+                        Structural Stress Lab
                       </div>
                       <button
                         onClick={toggleStructuralOverlay}
@@ -1124,6 +1143,7 @@ export const Toolbar: React.FC = () => {
                             ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-300/40'
                             : 'bg-slate-800 text-slate-300 border border-slate-700'
                         }`}
+                        title="Toggle heat map overlay"
                       >
                         {structuralOverlayEnabled ? 'On' : 'Off'}
                       </button>
@@ -1131,21 +1151,70 @@ export const Toolbar: React.FC = () => {
 
                     <div className="mt-2 flex items-end justify-between gap-2">
                       <div>
-                        <div className="text-[11px] text-cyan-100/80">Integrity Grade</div>
-                        <div className={`text-2xl font-semibold ${gradeToneClass}`}>
-                          {structuralReport.grade}
+                        <div className="text-[11px] text-cyan-100/80">
+                          {stressScenario === 'baseline' ? 'Integrity Grade' : 'Scenario Grade'}
+                        </div>
+                        <div className={`text-2xl font-semibold ${stressGradeToneClass}`}>
+                          {structuralReport.stress.grade}
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-[11px] text-cyan-100/80">Stability Index</div>
-                        <div className="font-mono text-lg text-cyan-100">{structuralPercent}%</div>
+                        <div className="text-[11px] text-cyan-100/80">
+                          {stressScenario === 'baseline' ? 'Stability Index' : 'Stress Score'}
+                        </div>
+                        <div className="font-mono text-lg text-cyan-100">{stressPercent}%</div>
                       </div>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                      {STRESS_SCENARIO_OPTIONS.map((scenarioOption) => {
+                        const active = stressScenario === scenarioOption.id;
+                        return (
+                          <button
+                            key={scenarioOption.id}
+                            onClick={() => {
+                              setStressScenario(scenarioOption.id);
+                              if (scenarioOption.id !== 'baseline' && !structuralOverlayEnabled) {
+                                toggleStructuralOverlay();
+                              }
+                            }}
+                            className={`rounded border px-2 py-1 text-[10px] text-left transition-colors ${
+                              active
+                                ? 'border-cyan-300/70 bg-cyan-500/20 text-cyan-100'
+                                : 'border-slate-700 bg-slate-900/80 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
+                            }`}
+                            title={scenarioOption.description}
+                          >
+                            <span className="inline-flex items-center gap-1.5">
+                              {getStressIcon(scenarioOption.id)}
+                              {scenarioOption.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between text-[10px] text-cyan-100/80">
+                        <span>Force Intensity</span>
+                        <span className="font-mono">{Math.round(stressIntensity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={stressIntensity}
+                        onChange={(e) => setStressIntensity(parseFloat(e.target.value))}
+                        className="mt-1 w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400"
+                        aria-label="Stress force intensity"
+                      />
                     </div>
 
                     <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
                       <div
                         className="h-full bg-gradient-to-r from-rose-500 via-amber-400 to-cyan-400 transition-[width] duration-200"
-                        style={{ width: `${structuralPercent}%` }}
+                        style={{ width: `${stressPercent}%` }}
                       />
                     </div>
                     <div className="mt-1 flex justify-between text-[10px] text-cyan-100/70">
@@ -1155,6 +1224,9 @@ export const Toolbar: React.FC = () => {
                     <div className="mt-1 text-[10px] font-mono text-cyan-200/80">
                       Heat map: red = high risk, amber = moderate, cyan = reinforced.
                     </div>
+                    <div className="mt-1 text-[10px] text-cyan-100/80">
+                      {structuralReport.stress.description}
+                    </div>
 
                     <div className="mt-2 text-[11px] text-cyan-100/80">
                       {structuralOverlayEnabled
@@ -1162,7 +1234,7 @@ export const Toolbar: React.FC = () => {
                         : 'Enable overlay to see stability heat map directly on parts.'}
                     </div>
                     <div className="mt-1 text-[11px] text-cyan-100/80">
-                      {structuralReport.recommendation}
+                      {activeStressRecommendation}
                     </div>
                   </div>
 

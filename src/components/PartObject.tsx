@@ -556,7 +556,8 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       const spanCoord = structuralField.primarySpanAxis === 'x'
         ? Math.abs(localPoint.x) / halfW
         : Math.abs(localPoint.z) / halfD;
-      const freeSpanRisk = clamp(spanCoord, 0, 1);
+      // Highest sag risk is usually near the middle of a free span, not the edges.
+      const freeSpanRisk = clamp(1 - spanCoord, 0, 1);
 
       const edgeDistanceX = Math.max(0, halfW - Math.abs(localPoint.x));
       const edgeDistanceZ = Math.max(0, halfD - Math.abs(localPoint.z));
@@ -566,21 +567,25 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       const baseRisk = 1 - structuralField.baseStability;
       const supportSpanRisk = clamp(1 - structuralField.supportPatternScore, 0, 1);
       const sagRisk = clamp((worldPoint.y - data.position[1]) / Math.max(height, 0.5), -0.2, 1);
+      const supportDistanceRisk = clamp(1 - supportInfluence * 1.22, 0, 1);
+      const loadedEdgeRisk = edgeRisk * clamp(0.2 + loadInfluence * 0.8, 0, 1);
       const risk = clamp(
-        baseRisk * 0.35
-          + supportSpanRisk * 0.24
-          + loadInfluence * 0.44
-          + freeSpanRisk * 0.2
-          + edgeRisk * 0.1
+        baseRisk * 0.26
+          + supportSpanRisk * 0.21
+          + loadInfluence * 0.47
+          + freeSpanRisk * 0.27
+          + supportDistanceRisk * 0.24
+          + loadedEdgeRisk * 0.06
           + Math.max(0, sagRisk) * 0.08
-          - supportInfluence * 0.5
-          - fastenerInfluence * 0.24,
+          - supportInfluence * 0.68
+          - fastenerInfluence * 0.27,
         0,
         1
       );
 
       const localStability = 1 - risk;
-      const stability = clamp(localStability * 0.56 + structuralField.baseStability * 0.44, 0, 1);
+      const blendedStability = clamp(localStability * 0.78 + structuralField.baseStability * 0.22, 0, 1);
+      const stability = clamp((blendedStability - 0.5) * 1.55 + 0.5, 0, 1);
       const color = new THREE.Color(getStructuralHeatColor(stability));
       colorArray[i * 3] = color.r;
       colorArray[i * 3 + 1] = color.g;
@@ -651,7 +656,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
     if (structuralOverlayEnabled && structuralHeatColor) {
       material.emissive.set(structuralHeatColor);
       const risk = 1 - (structuralScore ?? 1);
-      material.emissiveIntensity = 0.12 + risk * 0.34 + Math.max(0, Math.sin(clock.elapsedTime * 5 + risk * 8)) * 0.08;
+      material.emissiveIntensity = 0.18 + risk * 0.48 + Math.max(0, Math.sin(clock.elapsedTime * 5 + risk * 8)) * 0.1;
       return;
     }
 
@@ -900,7 +905,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
             <meshBasicMaterial
               vertexColors
               transparent
-              opacity={isSelected ? 0.36 : 0.5}
+              opacity={isSelected ? 0.48 : 0.64}
               depthTest
               depthWrite={false}
               polygonOffset

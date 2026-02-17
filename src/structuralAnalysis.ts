@@ -2,6 +2,13 @@ import { PartData } from './types';
 
 type Axis = 'x' | 'y' | 'z';
 
+export type StressScenario = 'baseline' | 'vertical-load' | 'lateral-rack' | 'torsion-twist' | 'impact-burst';
+
+export type StructuralAnalysisOptions = {
+  stressScenario?: StressScenario;
+  stressIntensity?: number;
+};
+
 type Bounds3 = {
   minX: number;
   maxX: number;
@@ -36,6 +43,15 @@ export type StructuralReport = {
   overallScore: number;
   grade: string;
   recommendation: string;
+  stress: {
+    scenario: StressScenario;
+    label: string;
+    description: string;
+    intensity: number;
+    score: number;
+    grade: string;
+    recommendation: string;
+  };
   partScores: Record<string, number>;
   partFields: Record<string, StructuralPartField>;
   weakPartIds: string[];
@@ -98,17 +114,91 @@ const rgbToHex = (r: number, g: number, b: number) =>
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+type StressProfile = {
+  id: StressScenario;
+  label: string;
+  description: string;
+  verticalLoad: number;
+  lateralLoad: number;
+  torsionLoad: number;
+  impactLoad: number;
+};
+
+const STRESS_PROFILES: Record<StressScenario, StressProfile> = {
+  baseline: {
+    id: 'baseline',
+    label: 'Baseline',
+    description: 'Normal workshop usage with no simulated extreme force.',
+    verticalLoad: 0,
+    lateralLoad: 0,
+    torsionLoad: 0,
+    impactLoad: 0,
+  },
+  'vertical-load': {
+    id: 'vertical-load',
+    label: 'Vertical Load',
+    description: 'Heavy top-down weight to reveal sag and support distribution.',
+    verticalLoad: 1,
+    lateralLoad: 0.2,
+    torsionLoad: 0.1,
+    impactLoad: 0,
+  },
+  'lateral-rack': {
+    id: 'lateral-rack',
+    label: 'Side Racking',
+    description: 'Sideways force to test wobble, bracing, and joint stiffness.',
+    verticalLoad: 0.2,
+    lateralLoad: 1,
+    torsionLoad: 0.35,
+    impactLoad: 0.15,
+  },
+  'torsion-twist': {
+    id: 'torsion-twist',
+    label: 'Twist Torque',
+    description: 'Opposing corner torque to expose torsional weak zones.',
+    verticalLoad: 0.3,
+    lateralLoad: 0.45,
+    torsionLoad: 1,
+    impactLoad: 0.1,
+  },
+  'impact-burst': {
+    id: 'impact-burst',
+    label: 'Impact Burst',
+    description: 'Sudden localized shock load to reveal brittle joints and stress spikes.',
+    verticalLoad: 0.4,
+    lateralLoad: 0.5,
+    torsionLoad: 0.25,
+    impactLoad: 1,
+  },
+};
+
+export const STRESS_SCENARIO_OPTIONS = (
+  Object.values(STRESS_PROFILES).map((profile) => ({
+    id: profile.id,
+    label: profile.label,
+    description: profile.description,
+  }))
+);
+
 const HEAT_STOPS: Array<{ t: number; color: string }> = [
-  { t: 0, color: '#ef4444' },
-  { t: 0.2, color: '#f97316' },
-  { t: 0.42, color: '#facc15' },
-  { t: 0.62, color: '#84cc16' },
-  { t: 0.82, color: '#22c55e' },
-  { t: 1, color: '#22d3ee' },
+  { t: 0, color: '#dc2626' },
+  { t: 0.16, color: '#f97316' },
+  { t: 0.34, color: '#facc15' },
+  { t: 0.58, color: '#84cc16' },
+  { t: 0.78, color: '#10b981' },
+  { t: 1, color: '#06b6d4' },
 ];
 
+const applyHeatContrast = (value: number) => {
+  const t = clamp(value, 0, 1);
+  if (t < 0.5) {
+    return 0.5 * Math.pow(t / 0.5, 1.28);
+  }
+  return 1 - 0.5 * Math.pow((1 - t) / 0.5, 1.28);
+};
+
 export const getStructuralHeatColor = (score: number) => {
-  const t = clamp(score, 0, 1);
+  const t = applyHeatContrast(score);
   for (let i = 0; i < HEAT_STOPS.length - 1; i += 1) {
     const start = HEAT_STOPS[i];
     const end = HEAT_STOPS[i + 1];
@@ -214,6 +304,15 @@ const getGrade = (score: number) => {
   return 'F';
 };
 
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
 const buildRecommendation = (
   overallScore: number,
   weakPartCount: number,
@@ -236,6 +335,30 @@ const buildRecommendation = (
     return 'Strong load path detected. Current design appears well braced for typical workshop use.';
   }
   return 'Moderate stability profile. Additional cross-bracing and fastener spread would improve confidence.';
+};
+
+const buildStressRecommendation = (
+  profile: StressProfile,
+  stressScore: number,
+  weakPartCount: number,
+  fastenerEngagement: number
+) => {
+  if (profile.id === 'baseline') {
+    return 'Baseline model only. Pick a stress scenario to preview force-specific weak zones.';
+  }
+  if (stressScore >= 0.82) {
+    return `Performs strongly under ${profile.label.toLowerCase()}. Current bracing pattern is handling this load well.`;
+  }
+  if (stressScore >= 0.65) {
+    return `Moderate under ${profile.label.toLowerCase()}. Add a brace near warm zones to improve stiffness.`;
+  }
+  if (fastenerEngagement < 0.34) {
+    return `Weak under ${profile.label.toLowerCase()}. Increase seam-bridging screw count before heavier use.`;
+  }
+  if (weakPartCount >= 3) {
+    return `Several hotspots under ${profile.label.toLowerCase()}. Reinforce red/orange zones first.`;
+  }
+  return `High-risk behavior under ${profile.label.toLowerCase()}. Add support points and shorten unsupported spans.`;
 };
 
 const computeSupportPatternScore = (
@@ -278,7 +401,71 @@ const computeSupportPatternScore = (
   return clamp(distribution + countBonus, 0, 1);
 };
 
-export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport => {
+const dedupeSortedValues = (values: number[], tolerance = 0.04) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const unique: number[] = [];
+  sorted.forEach((value) => {
+    if (unique.length === 0 || Math.abs(unique[unique.length - 1] - value) > tolerance) {
+      unique.push(value);
+    }
+  });
+  return unique;
+};
+
+const buildPatchSamples = (min: number, max: number) => {
+  const span = Math.max(max - min, 0);
+  const center = midpoint(min, max);
+  if (span <= 0.12) {
+    return [center];
+  }
+  const inset = Math.min(span * 0.24, 0.7);
+  return dedupeSortedValues([min + inset, center, max - inset]);
+};
+
+const pushDistributedPatchPoints = (
+  target: Map<string, StructuralPoint[]>,
+  partId: string,
+  patch: { xMin: number; xMax: number; zMin: number; zMax: number },
+  y: number,
+  baseIntensity: number
+) => {
+  const xSpan = Math.max(patch.xMax - patch.xMin, 0);
+  const zSpan = Math.max(patch.zMax - patch.zMin, 0);
+  const xs = buildPatchSamples(patch.xMin, patch.xMax);
+  const zs = buildPatchSamples(patch.zMin, patch.zMax);
+  const points: Array<{ x: number; z: number; weight: number }> = [];
+  const centerX = midpoint(patch.xMin, patch.xMax);
+  const centerZ = midpoint(patch.zMin, patch.zMax);
+  const halfX = Math.max(xSpan / 2, EPS);
+  const halfZ = Math.max(zSpan / 2, EPS);
+
+  xs.forEach((x) => {
+    zs.forEach((z) => {
+      const radial = Math.hypot((x - centerX) / halfX, (z - centerZ) / halfZ);
+      const weight = clamp(1 - radial * 0.22, 0.72, 1);
+      points.push({ x, z, weight });
+    });
+  });
+
+  const list = target.get(partId) ?? [];
+  points.forEach((point) => {
+    list.push({
+      x: point.x,
+      y,
+      z: point.z,
+      intensity: clamp(baseIntensity * point.weight, 0.12, 1),
+    });
+  });
+  target.set(partId, list);
+};
+
+export const analyzeStructuralIntegrity = (
+  parts: PartData[],
+  options: StructuralAnalysisOptions = {}
+): StructuralReport => {
+  const scenario = options.stressScenario ?? 'baseline';
+  const stressIntensity = clamp(options.stressIntensity ?? 0.6, 0, 1);
+  const stressProfile = STRESS_PROFILES[scenario] ?? STRESS_PROFILES.baseline;
   const woodParts = parts.filter((part) => part.type !== 'hardware');
   const hardwareParts = parts.filter((part) => part.type === 'hardware');
   const fastenerParts = hardwareParts.filter((part) => part.hardwareKind === 'fastener');
@@ -288,6 +475,15 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     overallScore: 0,
     grade: 'N/A',
     recommendation: 'Add parts to run structural analysis.',
+    stress: {
+      scenario: stressProfile.id,
+      label: stressProfile.label,
+      description: stressProfile.description,
+      intensity: stressIntensity,
+      score: 0,
+      grade: 'N/A',
+      recommendation: 'Add parts to run structural stress simulation.',
+    },
     partScores: {},
     partFields: {},
     weakPartIds: [],
@@ -329,6 +525,11 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
   const supportPoints = new Map<string, StructuralPoint[]>();
   const loadPoints = new Map<string, StructuralPoint[]>();
   const fastenerPoints = new Map<string, StructuralPoint[]>();
+  const verticalSupporters = new Map<string, Array<{
+    belowId: string;
+    area: number;
+    patch: { xMin: number; xMax: number; zMin: number; zMax: number };
+  }>>();
   woodParts.forEach((part) => {
     connections.set(part.id, []);
     supportArea.set(part.id, 0);
@@ -337,6 +538,7 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     supportPoints.set(part.id, []);
     loadPoints.set(part.id, []);
     fastenerPoints.set(part.id, []);
+    verticalSupporters.set(part.id, []);
   });
 
   let bridgingFasteners = 0;
@@ -362,38 +564,34 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
 
       if (Math.abs(a.minY - b.maxY) <= CONTACT_TOLERANCE) {
         supportArea.set(partA.id, (supportArea.get(partA.id) ?? 0) + verticalArea);
-        const supportCenterX = midpoint(Math.max(a.minX, b.minX), Math.min(a.maxX, b.maxX));
-        const supportCenterZ = midpoint(Math.max(a.minZ, b.minZ), Math.min(a.maxZ, b.maxZ));
+        const patch = {
+          xMin: Math.max(a.minX, b.minX),
+          xMax: Math.min(a.maxX, b.maxX),
+          zMin: Math.max(a.minZ, b.minZ),
+          zMax: Math.min(a.maxZ, b.maxZ),
+        };
         const supportIntensity = clamp(verticalArea / Math.max((partA.dimensions[0] * partA.dimensions[2]), EPS), 0.18, 1);
-        supportPoints.get(partA.id)?.push({
-          x: supportCenterX,
-          y: a.minY,
-          z: supportCenterZ,
-          intensity: supportIntensity,
-        });
-        loadPoints.get(partB.id)?.push({
-          x: supportCenterX,
-          y: b.maxY,
-          z: supportCenterZ,
-          intensity: supportIntensity,
+        pushDistributedPatchPoints(supportPoints, partA.id, patch, a.minY, supportIntensity);
+        verticalSupporters.get(partA.id)?.push({
+          belowId: partB.id,
+          area: verticalArea,
+          patch,
         });
       }
       if (Math.abs(b.minY - a.maxY) <= CONTACT_TOLERANCE) {
         supportArea.set(partB.id, (supportArea.get(partB.id) ?? 0) + verticalArea);
-        const supportCenterX = midpoint(Math.max(a.minX, b.minX), Math.min(a.maxX, b.maxX));
-        const supportCenterZ = midpoint(Math.max(a.minZ, b.minZ), Math.min(a.maxZ, b.maxZ));
+        const patch = {
+          xMin: Math.max(a.minX, b.minX),
+          xMax: Math.min(a.maxX, b.maxX),
+          zMin: Math.max(a.minZ, b.minZ),
+          zMax: Math.min(a.maxZ, b.maxZ),
+        };
         const supportIntensity = clamp(verticalArea / Math.max((partB.dimensions[0] * partB.dimensions[2]), EPS), 0.18, 1);
-        supportPoints.get(partB.id)?.push({
-          x: supportCenterX,
-          y: b.minY,
-          z: supportCenterZ,
-          intensity: supportIntensity,
-        });
-        loadPoints.get(partA.id)?.push({
-          x: supportCenterX,
-          y: a.maxY,
-          z: supportCenterZ,
-          intensity: supportIntensity,
+        pushDistributedPatchPoints(supportPoints, partB.id, patch, b.minY, supportIntensity);
+        verticalSupporters.get(partB.id)?.push({
+          belowId: partA.id,
+          area: verticalArea,
+          patch,
         });
       }
     }
@@ -468,35 +666,49 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     }
   });
 
-  for (let i = 0; i < woodParts.length; i += 1) {
-    for (let j = 0; j < woodParts.length; j += 1) {
-      if (i === j) continue;
-      const basePart = woodParts[i];
-      const abovePart = woodParts[j];
-      const baseBounds = boundsById.get(basePart.id);
-      const aboveBounds = boundsById.get(abovePart.id);
-      if (!baseBounds || !aboveBounds) continue;
+  const partById = new Map<string, PartData>();
+  const partVolumeById = new Map<string, number>();
+  const carriedLoad = new Map<string, number>();
+  woodParts.forEach((part) => {
+    partById.set(part.id, part);
+    const volume = Math.max(part.dimensions[0] * part.dimensions[1] * part.dimensions[2], EPS);
+    partVolumeById.set(part.id, volume);
+    carriedLoad.set(part.id, volume);
+  });
 
-      if (aboveBounds.minY < baseBounds.maxY - CONTACT_TOLERANCE) continue;
+  const topDownParts = [...woodParts].sort((lhs, rhs) => {
+    const a = boundsById.get(lhs.id);
+    const b = boundsById.get(rhs.id);
+    return (b?.maxY ?? 0) - (a?.maxY ?? 0);
+  });
 
-      const ox = overlap(baseBounds.minX, baseBounds.maxX, aboveBounds.minX, aboveBounds.maxX);
-      const oz = overlap(baseBounds.minZ, baseBounds.maxZ, aboveBounds.minZ, aboveBounds.maxZ);
-      const contactArea = ox * oz;
-      if (contactArea < MIN_CONTACT_AREA) continue;
+  topDownParts.forEach((part) => {
+    const supporters = verticalSupporters.get(part.id) ?? [];
+    if (supporters.length === 0) return;
+    const totalSupportArea = supporters.reduce((sum, item) => sum + item.area, 0);
+    if (totalSupportArea <= EPS) return;
 
-      const aboveVolume = abovePart.dimensions[0] * abovePart.dimensions[1] * abovePart.dimensions[2];
-      const aboveFootprint = Math.max(abovePart.dimensions[0] * abovePart.dimensions[2], EPS);
-      const loadFraction = clamp(contactArea / aboveFootprint, 0.15, 1);
-      const weightedLoad = aboveVolume * loadFraction;
-      loadDemand.set(basePart.id, (loadDemand.get(basePart.id) ?? 0) + weightedLoad);
-      loadPoints.get(basePart.id)?.push({
-        x: midpoint(Math.max(baseBounds.minX, aboveBounds.minX), Math.min(baseBounds.maxX, aboveBounds.maxX)),
-        y: baseBounds.maxY,
-        z: midpoint(Math.max(baseBounds.minZ, aboveBounds.minZ), Math.min(baseBounds.maxZ, aboveBounds.maxZ)),
-        intensity: clamp(weightedLoad / Math.max(basePart.dimensions[0] * basePart.dimensions[1] * basePart.dimensions[2], EPS), 0.12, 1),
-      });
-    }
-  }
+    const carried = carriedLoad.get(part.id) ?? (partVolumeById.get(part.id) ?? EPS);
+    supporters.forEach((item) => {
+      const share = item.area / totalSupportArea;
+      const transferredLoad = carried * share;
+      loadDemand.set(item.belowId, (loadDemand.get(item.belowId) ?? 0) + transferredLoad);
+      carriedLoad.set(item.belowId, (carriedLoad.get(item.belowId) ?? 0) + transferredLoad);
+
+      const belowPart = partById.get(item.belowId);
+      const belowBounds = boundsById.get(item.belowId);
+      if (!belowPart || !belowBounds) return;
+      const belowVolume = partVolumeById.get(item.belowId) ?? EPS;
+      const localIntensity = clamp((transferredLoad / belowVolume) * 0.72, 0.08, 1);
+      pushDistributedPatchPoints(
+        loadPoints,
+        item.belowId,
+        item.patch,
+        belowBounds.maxY,
+        localIntensity
+      );
+    });
+  });
 
   const adjacency = new Map<string, Set<string>>();
   woodParts.forEach((part) => adjacency.set(part.id, new Set<string>()));
@@ -539,6 +751,18 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     .map((part) => boundsById.get(part.id))
     .filter(Boolean) as Bounds3[];
   const lowestSupportPlaneY = Math.min(...allComputedBounds.map((bounds) => bounds.minY));
+  const modelMinX = Math.min(...allComputedBounds.map((bounds) => bounds.minX));
+  const modelMaxX = Math.max(...allComputedBounds.map((bounds) => bounds.maxX));
+  const modelMinY = Math.min(...allComputedBounds.map((bounds) => bounds.minY));
+  const modelMaxY = Math.max(...allComputedBounds.map((bounds) => bounds.maxY));
+  const modelMinZ = Math.min(...allComputedBounds.map((bounds) => bounds.minZ));
+  const modelMaxZ = Math.max(...allComputedBounds.map((bounds) => bounds.maxZ));
+  const modelCenterX = midpoint(modelMinX, modelMaxX);
+  const modelCenterZ = midpoint(modelMinZ, modelMaxZ);
+  const modelSpanX = Math.max(modelMaxX - modelMinX, EPS);
+  const modelSpanY = Math.max(modelMaxY - modelMinY, EPS);
+  const modelSpanZ = Math.max(modelMaxZ - modelMinZ, EPS);
+  const modelRadius = Math.max(Math.hypot(modelSpanX * 0.5, modelSpanZ * 0.5), EPS);
 
   let groundedParts = 0;
   let totalConnections = 0;
@@ -595,7 +819,7 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     const screwSupport = clamp((fastenerLinks.get(part.id) ?? 0) / 2.5, 0, 1);
     const ownVolume = Math.max(spanX * spanY * spanZ, EPS);
     const loadRatio = clamp((loadDemand.get(part.id) ?? 0) / ownVolume, 0, 5);
-    const pressurePenalty = clamp((loadRatio - 0.85) * 0.06, 0, 0.17) * (1 - supportRatio * 0.64);
+    const pressurePenalty = clamp((loadRatio - 1.05) * 0.045, 0, 0.14) * (1 - supportRatio * 0.68);
 
     let score = (
       supportRatio * 0.3
@@ -612,6 +836,52 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
     if (!grounded && contactList.length === 0 && screwSupport < 0.2) {
       score -= 0.22;
     }
+
+    const centerX = midpoint(bounds.minX, bounds.maxX);
+    const centerZ = midpoint(bounds.minZ, bounds.maxZ);
+    const radialNorm = clamp(
+      Math.hypot(centerX - modelCenterX, centerZ - modelCenterZ) / modelRadius,
+      0,
+      1
+    );
+    const topExposure = clamp((bounds.maxY - modelMinY) / modelSpanY, 0, 1);
+    const scenarioWeight = stressProfile.id === 'baseline'
+      ? 0
+      : clamp(0.4 + stressIntensity * 0.6, 0.4, 1);
+
+    const verticalPenalty = stressProfile.verticalLoad
+      * scenarioWeight
+      * (0.13 + loadRatio * 0.05)
+      * (1 - supportRatio * 0.72);
+    const lateralPenalty = stressProfile.lateralLoad
+      * scenarioWeight
+      * (0.12 + relativeHeight * 0.08 + topExposure * 0.05)
+      * (1 - (axisDiversity * 0.5 + screwSupport * 0.26 + connectionScore * 0.24));
+    const torsionPenalty = stressProfile.torsionLoad
+      * scenarioWeight
+      * (0.1 + radialNorm * 0.1 + topExposure * 0.06)
+      * (1 - (supportPatternScore * 0.46 + screwSupport * 0.34 + axisDiversity * 0.2));
+    const impactPenalty = stressProfile.impactLoad
+      * scenarioWeight
+      * (0.08 + loadRatio * 0.05)
+      * (1 - (screwSupport * 0.42 + connectionScore * 0.34 + supportRatio * 0.24));
+    const stressPenalty = clamp(
+      verticalPenalty + lateralPenalty + torsionPenalty + impactPenalty,
+      0,
+      0.56
+    );
+    const resilience = clamp(
+      supportRatio * 0.36
+      + supportPatternScore * 0.25
+      + screwSupport * 0.2
+      + axisDiversity * 0.19,
+      0,
+      1
+    );
+    const stressBonus = stressProfile.id === 'baseline'
+      ? 0
+      : Math.max(0, resilience - 0.62) * scenarioWeight * 0.08;
+    score = score - stressPenalty + stressBonus;
 
     score = clamp(score, 0, 1);
     partScores[part.id] = score;
@@ -631,6 +901,103 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
       });
     }
 
+    const scenarioLoadList: StructuralPoint[] = [];
+    if (stressProfile.id !== 'baseline') {
+      const heightBias = clamp(0.62 + topExposure * 0.52, 0.62, 1.25);
+      if (stressProfile.verticalLoad > 0) {
+        const vIntensity = clamp(
+          0.24 + stressProfile.verticalLoad * stressIntensity * heightBias * 0.62,
+          0.12,
+          1
+        );
+        scenarioLoadList.push({
+          x: midpoint(bounds.minX, bounds.maxX),
+          y: bounds.maxY,
+          z: midpoint(bounds.minZ, bounds.maxZ),
+          intensity: vIntensity,
+        });
+        scenarioLoadList.push({
+          x: lerp(bounds.minX, bounds.maxX, 0.22),
+          y: bounds.maxY,
+          z: lerp(bounds.minZ, bounds.maxZ, 0.22),
+          intensity: clamp(vIntensity * 0.7, 0.1, 1),
+        });
+        scenarioLoadList.push({
+          x: lerp(bounds.minX, bounds.maxX, 0.78),
+          y: bounds.maxY,
+          z: lerp(bounds.minZ, bounds.maxZ, 0.78),
+          intensity: clamp(vIntensity * 0.7, 0.1, 1),
+        });
+      }
+      if (stressProfile.lateralLoad > 0) {
+        const sidePushX = modelCenterX <= centerX ? bounds.maxX : bounds.minX;
+        const lIntensity = clamp(
+          0.2 + stressProfile.lateralLoad * stressIntensity * heightBias * 0.58,
+          0.1,
+          1
+        );
+        scenarioLoadList.push({
+          x: sidePushX,
+          y: lerp(bounds.minY, bounds.maxY, 0.8),
+          z: midpoint(bounds.minZ, bounds.maxZ),
+          intensity: lIntensity,
+        });
+        scenarioLoadList.push({
+          x: sidePushX,
+          y: lerp(bounds.minY, bounds.maxY, 0.56),
+          z: lerp(bounds.minZ, bounds.maxZ, 0.32),
+          intensity: clamp(lIntensity * 0.75, 0.1, 1),
+        });
+      }
+      if (stressProfile.torsionLoad > 0) {
+        const tIntensity = clamp(
+          0.2 + stressProfile.torsionLoad * stressIntensity * (0.55 + radialNorm * 0.55),
+          0.1,
+          1
+        );
+        scenarioLoadList.push({
+          x: bounds.minX,
+          y: bounds.maxY,
+          z: bounds.maxZ,
+          intensity: tIntensity,
+        });
+        scenarioLoadList.push({
+          x: bounds.maxX,
+          y: bounds.maxY,
+          z: bounds.minZ,
+          intensity: clamp(tIntensity * 0.9, 0.1, 1),
+        });
+      }
+      if (stressProfile.impactLoad > 0) {
+        const seed = hashString(part.id);
+        const tx = 0.18 + ((seed % 100) / 100) * 0.64;
+        const tz = 0.18 + (((seed >> 7) % 100) / 100) * 0.64;
+        const impactX = lerp(bounds.minX, bounds.maxX, tx);
+        const impactZ = lerp(bounds.minZ, bounds.maxZ, tz);
+        const iIntensity = clamp(
+          0.28 + stressProfile.impactLoad * stressIntensity * 0.72,
+          0.1,
+          1
+        );
+        scenarioLoadList.push({
+          x: impactX,
+          y: lerp(bounds.minY, bounds.maxY, 0.86),
+          z: impactZ,
+          intensity: iIntensity,
+        });
+        scenarioLoadList.push({
+          x: lerp(bounds.minX, bounds.maxX, clamp(tx + 0.14, 0.08, 0.92)),
+          y: lerp(bounds.minY, bounds.maxY, 0.68),
+          z: lerp(bounds.minZ, bounds.maxZ, clamp(tz - 0.12, 0.08, 0.92)),
+          intensity: clamp(iIntensity * 0.62, 0.1, 1),
+        });
+      }
+    }
+    const mergedLoadPoints = [
+      ...(loadPoints.get(part.id) ?? []),
+      ...scenarioLoadList,
+    ];
+
     partFields[part.id] = {
       baseStability: score,
       supportPatternScore,
@@ -639,7 +1006,7 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
         ...point,
         intensity: clamp(point.intensity, 0.1, 1),
       })),
-      loadPoints: (loadPoints.get(part.id) ?? []).map((point) => ({
+      loadPoints: mergedLoadPoints.map((point) => ({
         ...point,
         intensity: clamp(point.intensity, 0.1, 1),
       })),
@@ -728,11 +1095,26 @@ export const analyzeStructuralIntegrity = (parts: PartData[]): StructuralReport 
   const overallScore = clamp(0.08 + penalized * 0.92, 0, 1);
   const grade = getGrade(overallScore);
   const fastenerEngagement = fastenerCount > 0 ? clamp(bridgingFasteners / fastenerCount, 0, 1) : 0;
+  const stressScore = overallScore;
 
   return {
     overallScore,
     grade,
     recommendation: buildRecommendation(overallScore, weakPartIds.length, connectedGroups, fastenerEngagement),
+    stress: {
+      scenario: stressProfile.id,
+      label: stressProfile.label,
+      description: stressProfile.description,
+      intensity: stressIntensity,
+      score: stressScore,
+      grade: getGrade(stressScore),
+      recommendation: buildStressRecommendation(
+        stressProfile,
+        stressScore,
+        weakPartIds.length,
+        fastenerEngagement
+      ),
+    },
     partScores,
     partFields,
     weakPartIds,
