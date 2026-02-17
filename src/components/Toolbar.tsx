@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb, Scissors } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb, Scissors, Undo2, Redo2, Sun } from 'lucide-react';
 import { CutCorner, PartData } from '../types';
 import * as THREE from 'three';
 
@@ -598,15 +598,24 @@ export const Toolbar: React.FC = () => {
     setHingeAngle,
     snapEnabled,
     toggleSnap,
+    edgeSnapEnabled,
+    toggleEdgeSnap,
     parts,
+    pastParts,
+    futureParts,
     setParts,
+    undo,
+    redo,
     floorEnabled,
     toggleFloor,
+    shadowsEnabled,
+    toggleShadows,
     requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
     autoScrewParts,
     selectPart,
+    setHoveredId,
   } = useStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -620,6 +629,8 @@ export const Toolbar: React.FC = () => {
   const autoScrewLastHandledSelectionRef = useRef<string | null>(null);
   const selectedPart = parts.find((part) => part.id === selectedId);
   const autoScrewFirstPart = autoScrewFirstId ? parts.find((part) => part.id === autoScrewFirstId) : null;
+  const canUndo = pastParts.length > 0;
+  const canRedo = futureParts.length > 0;
   const selectedHinge = selectedPart?.hardwareKind === 'hinge' ? selectedPart : null;
   const hingeRangeRad = (() => {
     const defaultMin = (-110 * Math.PI) / 180;
@@ -647,7 +658,19 @@ export const Toolbar: React.FC = () => {
 
   const handleDuplicate = () => {
     if (!selectedId) return;
-    duplicatePart(selectedId, { selectDuplicate: tool === 'select' });
+    const sourceId = selectedId;
+    if (tool === 'move' || tool === 'rotate') {
+      const restoreTool = tool;
+      setTool('select');
+      window.requestAnimationFrame(() => {
+        duplicatePart(sourceId);
+        window.requestAnimationFrame(() => {
+          setTool(restoreTool);
+        });
+      });
+      return;
+    }
+    duplicatePart(sourceId);
   };
 
   const handleReset = () => {
@@ -676,8 +699,9 @@ export const Toolbar: React.FC = () => {
       setAutoScrewFirstId(null);
       setAutoScrewStatus(null);
       autoScrewLastHandledSelectionRef.current = null;
+      setHoveredId(null);
     }
-  }, [tool]);
+  }, [setHoveredId, tool]);
 
   useEffect(() => {
     if (tool !== 'auto-screw' || !selectedId) return;
@@ -706,25 +730,31 @@ export const Toolbar: React.FC = () => {
     if (autoScrewFirstId === selectedId) {
       setAutoScrewStatus({
         tone: 'info',
-        text: 'Pick a different second piece.',
+        text: `Entry piece locked: ${pickedPart.name}. Pick a different second piece.`,
       });
       return;
     }
 
     const placement = autoScrewParts(autoScrewFirstId, selectedId);
     if (placement.ok) {
-      setTool('select');
       setAutoScrewFirstId(null);
-      setAutoScrewStatus(null);
+      setAutoScrewStatus({
+        tone: 'success',
+        text: `Placed ${placement.screwCount} screws. Reset to Step 1: pick an entry piece.`,
+      });
       autoScrewLastHandledSelectionRef.current = null;
+      selectPart(null);
       return;
     }
 
+    setAutoScrewFirstId(null);
     setAutoScrewStatus({
       tone: 'error',
-      text: placement.message,
+      text: `${placement.message} Reset to Step 1: pick an entry piece.`,
     });
-  }, [autoScrewFirstId, autoScrewParts, parts, selectedId, tool]);
+    autoScrewLastHandledSelectionRef.current = null;
+    selectPart(null);
+  }, [autoScrewFirstId, autoScrewParts, parts, selectPart, selectedId, tool]);
 
   const handleOpenExport = () => {
     setIsExportModalOpen(true);
@@ -736,7 +766,7 @@ export const Toolbar: React.FC = () => {
     setAutoScrewFirstId(null);
     setAutoScrewStatus({
       tone: 'info',
-      text: 'Step 1: click the first wood piece, then click the second piece.',
+      text: 'Step 1: pick entry piece (where screw head shows), then pick destination piece.',
     });
     autoScrewLastHandledSelectionRef.current = null;
     selectPart(null);
@@ -834,6 +864,7 @@ export const Toolbar: React.FC = () => {
 
           if (Array.isArray(importedParts)) {
             setParts(importedParts);
+            requestCameraFocus();
             if (typeof parsed?.projectName === 'string' && parsed.projectName.trim()) {
               setExportName(parsed.projectName.trim());
             }
@@ -900,6 +931,32 @@ export const Toolbar: React.FC = () => {
           title="Duplicate Selected"
         >
           <Copy size={18} />
+        </button>
+
+        <button
+          onClick={undo}
+          disabled={!canUndo}
+          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
+            canUndo
+              ? 'text-slate-600 hover:bg-slate-100'
+              : 'text-slate-300 cursor-not-allowed'
+          }`}
+          title="Undo"
+        >
+          <Undo2 size={18} />
+        </button>
+
+        <button
+          onClick={redo}
+          disabled={!canRedo}
+          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
+            canRedo
+              ? 'text-slate-600 hover:bg-slate-100'
+              : 'text-slate-300 cursor-not-allowed'
+          }`}
+          title="Redo"
+        >
+          <Redo2 size={18} />
         </button>
 
         <button
@@ -987,20 +1044,26 @@ export const Toolbar: React.FC = () => {
             onClick={() => {
               setIsSpecialMenuOpen((prev) => !prev);
             }}
-            className={`p-1.5 sm:p-2 rounded-md transition-colors ${
+            className={`inline-flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-1.5 sm:py-2 rounded-md transition-colors ${
               isSpecialMenuOpen || tool === 'auto-screw'
                 ? 'bg-blue-100 text-blue-600'
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
-            title="Special Tools"
+            title="Special Tools (Dropdown)"
+            aria-label="Special tools dropdown"
             aria-haspopup="menu"
             aria-expanded={isSpecialMenuOpen}
           >
-            <Wrench size={18} />
+            <Wrench size={16} />
+            <span className="hidden sm:inline text-xs font-medium">Special Tools</span>
+            {isSpecialMenuOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
 
           {isSpecialMenuOpen && (
             <div className="absolute right-0 top-full mt-2 w-52 rounded-lg border border-slate-200 bg-white shadow-xl p-1.5 z-30">
+              <div className="px-2.5 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Building
+              </div>
               <button
                 onClick={handleActivateAutoScrew}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
@@ -1024,6 +1087,38 @@ export const Toolbar: React.FC = () => {
                 </span>
               </button>
 
+              <div className="my-1 h-px bg-slate-200" />
+              <div className="px-2.5 pt-0.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Handling
+              </div>
+              <button
+                onClick={toggleSnap}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Magnet size={16} />
+                  Snapping {snapEnabled ? 'On' : 'Off'}
+                </span>
+                {snapEnabled && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <button
+                onClick={toggleEdgeSnap}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+              >
+                <span className="flex items-center gap-2">
+                  <Magnet size={16} />
+                  Edge Snap {edgeSnapEnabled ? 'On' : 'Off'}
+                </span>
+                {edgeSnapEnabled && <Check size={14} className="text-blue-600" />}
+              </button>
+
+              <div className="my-1 h-px bg-slate-200" />
+              <div className="px-2.5 pt-0.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Settings
+              </div>
               <button
                 onClick={toggleFloor}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
@@ -1037,15 +1132,15 @@ export const Toolbar: React.FC = () => {
               </button>
 
               <button
-                onClick={toggleSnap}
+                onClick={toggleShadows}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
               >
                 <span className="flex items-center gap-2">
-                  <Magnet size={16} />
-                  Snapping {snapEnabled ? 'On' : 'Off'}
+                  <Sun size={16} />
+                  Shadows {shadowsEnabled ? 'On' : 'Off'}
                 </span>
-                {snapEnabled && <Check size={14} className="text-blue-600" />}
+                {shadowsEnabled && <Check size={14} className="text-blue-600" />}
               </button>
 
               <button
@@ -1098,8 +1193,8 @@ export const Toolbar: React.FC = () => {
               <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">Auto Screw Mode</div>
               <div className="mt-0.5 text-sm text-slate-700">
                 {!autoScrewFirstPart
-                  ? 'Step 1: Select your first wood piece.'
-                  : `Step 2: Select the second piece to join with ${autoScrewFirstPart.name}.`}
+                  ? 'Step 1: Select the entry piece (screw head side).'
+                  : `Step 2: Select the destination piece to join with ${autoScrewFirstPart.name}.`}
               </div>
               {autoScrewStatus && (
                 <div
@@ -1114,10 +1209,13 @@ export const Toolbar: React.FC = () => {
                   {autoScrewStatus.text}
                 </div>
               )}
+              <div className="mt-1 text-[11px] text-slate-500">
+                Hovered piece highlights in green. Auto Screw stays active for rapid placement.
+              </div>
             </div>
             <button
               onClick={handleExitAutoScrew}
-              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 transition-colors"
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100 transition-colors"
               title="Exit Auto Screw Mode"
             >
               <X size={12} />

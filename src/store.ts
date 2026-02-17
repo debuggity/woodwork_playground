@@ -103,6 +103,40 @@ const rebuildAllAttachments = (parts: PartData[]) => {
   return hingeIds.reduce((acc, hingeId) => updateAttachedPartsForHinge(acc, hingeId), normalized);
 };
 
+const clonePart = (part: PartData): PartData => ({
+  ...part,
+  dimensions: [...part.dimensions] as [number, number, number],
+  position: [...part.position] as [number, number, number],
+  rotation: [...part.rotation] as [number, number, number],
+  profile: part.profile
+    ? {
+        ...part.profile,
+        points: part.profile.points ? part.profile.points.map(([x, z]) => [x, z] as [number, number]) : undefined,
+      }
+    : undefined,
+  hinge: part.hinge ? { ...part.hinge } : undefined,
+  attachment: part.attachment
+    ? {
+        ...part.attachment,
+        localPosition: [...part.attachment.localPosition] as [number, number, number],
+        localRotation: [...part.attachment.localRotation] as [number, number, number],
+      }
+    : undefined,
+});
+
+const cloneParts = (parts: PartData[]) => parts.map(clonePart);
+
+const withHistory = (
+  state: AppState,
+  nextParts: PartData[],
+  extras: Partial<AppState> = {}
+): Partial<AppState> => ({
+  ...extras,
+  parts: nextParts,
+  pastParts: [...state.pastParts, cloneParts(state.parts)].slice(-80),
+  futureParts: [],
+});
+
 type AutoScrewResult = {
   ok: boolean;
   message: string;
@@ -559,6 +593,8 @@ const getDirectionCandidates = (
 
 interface AppState {
   parts: PartData[];
+  pastParts: PartData[][];
+  futureParts: PartData[][];
   selectedId: string | null;
   hoveredId: string | null;
   tool: ToolType;
@@ -566,7 +602,11 @@ interface AppState {
   cameraFocusRequest: number;
   
   addPart: (part: PartData) => void;
-  updatePart: (id: string, updates: Partial<PartData>) => void;
+  updatePart: (
+    id: string,
+    updates: Partial<PartData>,
+    options?: { trackHistory?: boolean }
+  ) => void;
   removePart: (id: string) => void;
   selectPart: (id: string | null) => void;
   setHoveredId: (id: string | null) => void;
@@ -580,28 +620,39 @@ interface AppState {
   setParts: (parts: PartData[]) => void;
   snapEnabled: boolean;
   toggleSnap: () => void;
+  edgeSnapEnabled: boolean;
+  toggleEdgeSnap: () => void;
+  undo: () => void;
+  redo: () => void;
   floorEnabled: boolean;
   toggleFloor: () => void;
+  shadowsEnabled: boolean;
+  toggleShadows: () => void;
   requestCameraFocus: () => void;
   setExplodeFactor: (value: number) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
   parts: [],
+  pastParts: [],
+  futureParts: [],
   selectedId: null,
   hoveredId: null,
   tool: 'select',
   explodeFactor: 0,
   cameraFocusRequest: 0,
   snapEnabled: true, // Default to true for easier alignment
+  edgeSnapEnabled: true,
   floorEnabled: false,
+  shadowsEnabled: false,
 
-  addPart: (part) => set((state) => ({ 
-    parts: [...state.parts, part],
-    selectedId: part.id 
-  })),
+  addPart: (part) => set((state) =>
+    withHistory(state, [...state.parts, part], {
+      selectedId: part.id,
+    })
+  ),
 
-  updatePart: (id, updates) => set((state) => {
+  updatePart: (id, updates, options) => set((state) => {
     const current = state.parts.find((part) => part.id === id);
     const detachingAttachment = Boolean(
       current?.attachment && (updates.position || updates.rotation)
@@ -622,7 +673,11 @@ export const useStore = create<AppState>((set) => ({
       parts = updateAttachedPartsForHinge(parts, id);
     }
 
-    return { parts };
+    if (options?.trackHistory === false) {
+      return { parts };
+    }
+
+    return withHistory(state, parts);
   }),
 
   removePart: (id) => set((state) => {
@@ -638,11 +693,10 @@ export const useStore = create<AppState>((set) => ({
         )
       : kept;
 
-    return {
-      parts,
+    return withHistory(state, parts, {
       selectedId: state.selectedId === id ? null : state.selectedId,
       hoveredId: state.hoveredId === id ? null : state.hoveredId,
-    };
+    });
   }),
 
   selectPart: (id) => set({ selectedId: id }),
@@ -657,11 +711,7 @@ export const useStore = create<AppState>((set) => ({
     const newPart: PartData = {
       ...partToDuplicate,
       id: uuidv4(),
-      position: [
-        partToDuplicate.position[0] + 5, 
-        partToDuplicate.position[1], 
-        partToDuplicate.position[2] + 5
-      ],
+      position: [...partToDuplicate.position] as [number, number, number],
       attachment: undefined,
       hinge: partToDuplicate.hardwareKind === 'hinge'
         ? {
@@ -676,10 +726,9 @@ export const useStore = create<AppState>((set) => ({
         : partToDuplicate.hinge,
     };
 
-    return {
-      parts: [...state.parts, newPart],
+    return withHistory(state, [...state.parts, newPart], {
       selectedId: shouldSelectDuplicate ? newPart.id : state.selectedId,
-    };
+    });
   }),
 
   attachPartToHinge: (partId, hingeId) => set((state) => {
@@ -701,29 +750,29 @@ export const useStore = create<AppState>((set) => ({
     const localRotQuat = hingeInverseQuat.clone().multiply(toQuaternion(part.rotation));
     const [localRx, localRy, localRz] = toEulerTuple(localRotQuat);
 
-    return {
-      parts: state.parts.map((item) =>
-        item.id === partId
-          ? {
-              ...item,
-              attachment: {
-                hingeId,
-                localPosition: [localPos.x, localPos.y, localPos.z],
-                localRotation: [localRx, localRy, localRz],
-              },
-            }
-          : item
-      ),
-    };
+    const nextParts = state.parts.map((item) =>
+      item.id === partId
+        ? {
+            ...item,
+            attachment: {
+              hingeId,
+              localPosition: [localPos.x, localPos.y, localPos.z],
+              localRotation: [localRx, localRy, localRz],
+            },
+          }
+        : item
+    );
+    return withHistory(state, nextParts);
   }),
 
-  detachPartFromHinge: (partId) => set((state) => ({
-    parts: state.parts.map((part) =>
+  detachPartFromHinge: (partId) => set((state) => {
+    const nextParts = state.parts.map((part) =>
       part.id === partId
         ? { ...part, attachment: undefined }
         : part
-    ),
-  })),
+    );
+    return withHistory(state, nextParts);
+  }),
 
   setHingeAngle: (hingeId, angle) => set((state) => {
     const hinge = state.parts.find((part) => part.id === hingeId);
@@ -747,7 +796,7 @@ export const useStore = create<AppState>((set) => ({
     );
 
     parts = updateAttachedPartsForHinge(parts, hingeId);
-    return { parts };
+    return withHistory(state, parts);
   }),
 
   autoScrewParts: (firstId, secondId) => {
@@ -1113,10 +1162,9 @@ export const useStore = create<AppState>((set) => ({
         message: 'Placed 2 screws.',
         screwCount: 2,
       };
-      return {
-        parts: [...state.parts, ...bestPlan.screws],
+      return withHistory(state, [...state.parts, ...bestPlan.screws], {
         selectedId: secondId,
-      };
+      });
     });
 
     return result;
@@ -1124,23 +1172,53 @@ export const useStore = create<AppState>((set) => ({
 
   setTool: (tool) => set({ tool }),
 
-  resetScene: () => set({
-    parts: [],
-    selectedId: null,
-    hoveredId: null,
-    explodeFactor: 0,
-    cameraFocusRequest: 0,
-  }),
+  resetScene: () => set((state) =>
+    withHistory(state, [], {
+      selectedId: null,
+      hoveredId: null,
+      explodeFactor: 0,
+      cameraFocusRequest: 0,
+    })
+  ),
 
-  setParts: (parts) => set({
-    parts: rebuildAllAttachments(parts),
-    selectedId: null,
-    hoveredId: null,
-  }),
+  setParts: (parts) => set((state) =>
+    withHistory(state, rebuildAllAttachments(parts), {
+      selectedId: null,
+      hoveredId: null,
+    })
+  ),
 
   toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
 
+  toggleEdgeSnap: () => set((state) => ({ edgeSnapEnabled: !state.edgeSnapEnabled })),
+
+  undo: () => set((state) => {
+    if (state.pastParts.length === 0) return {};
+    const previous = state.pastParts[state.pastParts.length - 1];
+    return {
+      parts: rebuildAllAttachments(cloneParts(previous)),
+      pastParts: state.pastParts.slice(0, -1),
+      futureParts: [cloneParts(state.parts), ...state.futureParts].slice(0, 80),
+      selectedId: null,
+      hoveredId: null,
+    };
+  }),
+
+  redo: () => set((state) => {
+    if (state.futureParts.length === 0) return {};
+    const [next, ...remainingFuture] = state.futureParts;
+    return {
+      parts: rebuildAllAttachments(cloneParts(next)),
+      pastParts: [...state.pastParts, cloneParts(state.parts)].slice(-80),
+      futureParts: remainingFuture,
+      selectedId: null,
+      hoveredId: null,
+    };
+  }),
+
   toggleFloor: () => set((state) => ({ floorEnabled: !state.floorEnabled })),
+
+  toggleShadows: () => set((state) => ({ shadowsEnabled: !state.shadowsEnabled })),
 
   requestCameraFocus: () => set((state) => ({ cameraFocusRequest: state.cameraFocusRequest + 1 })),
 

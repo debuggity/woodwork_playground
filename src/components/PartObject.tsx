@@ -1,5 +1,5 @@
 import React, { useRef, useMemo, useEffect, useCallback } from 'react';
-import { ThreeEvent, useFrame } from '@react-three/fiber';
+import { ThreeEvent, useFrame, useThree } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '../store';
@@ -85,6 +85,122 @@ const clampCut = (value: number, maxValue: number) => {
 };
 
 const clampMiterAngle = (degrees: number) => Math.max(-80, Math.min(80, degrees));
+const EDGE_SNAP_THRESHOLD = 0.35;
+const EDGE_SNAP_MIN_OVERLAP = 0.2;
+
+type Aabb3 = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+};
+
+const getAxisOverlap = (aMin: number, aMax: number, bMin: number, bMax: number) =>
+  Math.max(0, Math.min(aMax, bMax) - Math.max(aMin, bMin));
+
+const getPartAabbAtPosition = (part: PartData, position: [number, number, number]): Aabb3 => {
+  const [w, h, d] = part.dimensions;
+  const halfW = w / 2;
+  const halfH = h / 2;
+  const halfD = d / 2;
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(part.rotation[0], part.rotation[1], part.rotation[2], 'XYZ')
+  );
+  const corners = [
+    new THREE.Vector3(halfW, halfH, halfD),
+    new THREE.Vector3(halfW, halfH, -halfD),
+    new THREE.Vector3(halfW, -halfH, halfD),
+    new THREE.Vector3(halfW, -halfH, -halfD),
+    new THREE.Vector3(-halfW, halfH, halfD),
+    new THREE.Vector3(-halfW, halfH, -halfD),
+    new THREE.Vector3(-halfW, -halfH, halfD),
+    new THREE.Vector3(-halfW, -halfH, -halfD),
+  ].map((corner) => corner.applyQuaternion(quaternion).add(new THREE.Vector3(...position)));
+
+  return {
+    minX: Math.min(...corners.map((c) => c.x)),
+    maxX: Math.max(...corners.map((c) => c.x)),
+    minY: Math.min(...corners.map((c) => c.y)),
+    maxY: Math.max(...corners.map((c) => c.y)),
+    minZ: Math.min(...corners.map((c) => c.z)),
+    maxZ: Math.max(...corners.map((c) => c.z)),
+  };
+};
+
+const computeEdgeSnappedPosition = (
+  movingPart: PartData,
+  position: [number, number, number],
+  parts: PartData[]
+): [number, number, number] => {
+  const movingAabb = getPartAabbAtPosition(movingPart, position);
+  const bestDelta: { x: number | null; y: number | null; z: number | null } = {
+    x: null,
+    y: null,
+    z: null,
+  };
+
+  parts.forEach((other) => {
+    if (other.id === movingPart.id) return;
+    if (other.type === 'hardware') return;
+
+    const otherAabb = getPartAabbAtPosition(other, other.position);
+    const overlapY = getAxisOverlap(movingAabb.minY, movingAabb.maxY, otherAabb.minY, otherAabb.maxY);
+    const overlapZ = getAxisOverlap(movingAabb.minZ, movingAabb.maxZ, otherAabb.minZ, otherAabb.maxZ);
+    if (overlapY >= EDGE_SNAP_MIN_OVERLAP && overlapZ >= EDGE_SNAP_MIN_OVERLAP) {
+      const xCandidates = [
+        otherAabb.minX - movingAabb.minX,
+        otherAabb.maxX - movingAabb.minX,
+        otherAabb.minX - movingAabb.maxX,
+        otherAabb.maxX - movingAabb.maxX,
+      ];
+      xCandidates.forEach((delta) => {
+        if (Math.abs(delta) > EDGE_SNAP_THRESHOLD) return;
+        if (bestDelta.x === null || Math.abs(delta) < Math.abs(bestDelta.x)) {
+          bestDelta.x = delta;
+        }
+      });
+    }
+
+    const overlapX = getAxisOverlap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
+    if (overlapX >= EDGE_SNAP_MIN_OVERLAP && overlapZ >= EDGE_SNAP_MIN_OVERLAP) {
+      const yCandidates = [
+        otherAabb.minY - movingAabb.minY,
+        otherAabb.maxY - movingAabb.minY,
+        otherAabb.minY - movingAabb.maxY,
+        otherAabb.maxY - movingAabb.maxY,
+      ];
+      yCandidates.forEach((delta) => {
+        if (Math.abs(delta) > EDGE_SNAP_THRESHOLD) return;
+        if (bestDelta.y === null || Math.abs(delta) < Math.abs(bestDelta.y)) {
+          bestDelta.y = delta;
+        }
+      });
+    }
+
+    if (overlapX >= EDGE_SNAP_MIN_OVERLAP && overlapY >= EDGE_SNAP_MIN_OVERLAP) {
+      const zCandidates = [
+        otherAabb.minZ - movingAabb.minZ,
+        otherAabb.maxZ - movingAabb.minZ,
+        otherAabb.minZ - movingAabb.maxZ,
+        otherAabb.maxZ - movingAabb.maxZ,
+      ];
+      zCandidates.forEach((delta) => {
+        if (Math.abs(delta) > EDGE_SNAP_THRESHOLD) return;
+        if (bestDelta.z === null || Math.abs(delta) < Math.abs(bestDelta.z)) {
+          bestDelta.z = delta;
+        }
+      });
+    }
+  });
+
+  return [
+    position[0] + (bestDelta.x ?? 0),
+    position[1] + (bestDelta.y ?? 0),
+    position[2] + (bestDelta.z ?? 0),
+  ];
+};
 
 const createAngledPrismGeometry = (
   width: number,
@@ -175,12 +291,16 @@ const hashString = (value: string) => {
 };
 
 export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partIndex, totalParts, assemblyCenter }) => {
+  const controls = useThree((state) => state.controls as { enabled?: boolean } | undefined);
   const isSelected = useStore((state) => state.selectedId === data.id);
   const isHoveredInSceneList = useStore((state) => state.hoveredId === data.id);
+  const parts = useStore((state) => state.parts);
   const tool = useStore((state) => state.tool);
   const snapEnabled = useStore((state) => state.snapEnabled);
+  const edgeSnapEnabled = useStore((state) => state.edgeSnapEnabled);
   const explodeFactor = useStore((state) => state.explodeFactor);
   const selectPart = useStore((state) => state.selectPart);
+  const setHoveredId = useStore((state) => state.setHoveredId);
   const updatePart = useStore((state) => state.updatePart);
 
   const explodeGroupRef = useRef<THREE.Group>(null);
@@ -216,6 +336,19 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
       return;
     }
     selectPart(data.id);
+  };
+
+  const handlePointerEnter = (e: ThreeEvent<PointerEvent>) => {
+    if (tool !== 'auto-screw') return;
+    if (data.type === 'hardware') return;
+    e.stopPropagation();
+    setHoveredId(data.id);
+  };
+
+  const handlePointerLeave = (e: ThreeEvent<PointerEvent>) => {
+    if (tool !== 'auto-screw') return;
+    e.stopPropagation();
+    setHoveredId(null);
   };
 
   const position = useMemo(() => new THREE.Vector3(...data.position), [data.position]);
@@ -386,21 +519,21 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     material.emissiveIntensity = 0;
   });
 
-  const syncTransformToStore = useCallback(() => {
+  const syncTransformToStore = useCallback((trackHistory = true) => {
     if (!meshRef.current) return;
     const newPos = meshRef.current.position;
     const newRot = meshRef.current.rotation;
     updatePart(data.id, {
       position: [newPos.x, newPos.y, newPos.z],
       rotation: [newRot.x, newRot.y, newRot.z],
-    });
+    }, { trackHistory });
   }, [data.id, updatePart]);
 
   const scheduleTransformSync = useCallback(() => {
     if (transformSyncRafRef.current !== null) return;
     transformSyncRafRef.current = window.requestAnimationFrame(() => {
       transformSyncRafRef.current = null;
-      syncTransformToStore();
+      syncTransformToStore(false);
     });
   }, [syncTransformToStore]);
 
@@ -408,6 +541,9 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     if (!meshRef.current) return;
 
     isTransformingRef.current = true;
+    if (controls) {
+      controls.enabled = false;
+    }
     transformStartRef.current = {
       position: meshRef.current.position.clone(),
       rotation: meshRef.current.rotation.clone(),
@@ -416,11 +552,27 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
 
   const onTransformObjectChange = () => {
     if (!isTransformingRef.current) return;
+    if (
+      tool === 'move'
+      && edgeSnapEnabled
+      && data.type !== 'hardware'
+      && meshRef.current
+    ) {
+      const next = computeEdgeSnappedPosition(
+        data,
+        [meshRef.current.position.x, meshRef.current.position.y, meshRef.current.position.z],
+        parts
+      );
+      meshRef.current.position.set(next[0], next[1], next[2]);
+    }
     scheduleTransformSync();
   };
 
   const onTransformEnd = useCallback(() => {
     isTransformingRef.current = false;
+    if (controls) {
+      controls.enabled = true;
+    }
     if (!meshRef.current) {
       transformStartRef.current = null;
       return;
@@ -429,6 +581,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     const newPos = meshRef.current.position;
     const newRot = meshRef.current.rotation;
     const start = transformStartRef.current;
+    let changed = false;
 
     if (start) {
       const moved = newPos.distanceTo(start.position) > 0.0001;
@@ -436,15 +589,21 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
         Math.abs(newRot.x - start.rotation.x) > 0.0001 ||
         Math.abs(newRot.y - start.rotation.y) > 0.0001 ||
         Math.abs(newRot.z - start.rotation.z) > 0.0001;
+      changed = moved || rotated;
 
-      if (moved || rotated) {
+      if (changed) {
         suppressSelectionUntil = Date.now() + SELECTION_SUPPRESS_MS;
       }
     }
     transformStartRef.current = null;
-
-    syncTransformToStore();
-  }, [syncTransformToStore]);
+    if (transformSyncRafRef.current !== null) {
+      window.cancelAnimationFrame(transformSyncRafRef.current);
+      transformSyncRafRef.current = null;
+    }
+    if (changed) {
+      syncTransformToStore(true);
+    }
+  }, [controls, syncTransformToStore]);
 
   const showTransform = explodeFactor < 0.001 && isSelected && (tool === 'move' || tool === 'rotate');
   const mode = tool === 'rotate' ? 'rotate' : 'translate';
@@ -466,8 +625,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     if (!showTransform) {
       isTransformingRef.current = false;
       transformStartRef.current = null;
+      if (controls) {
+        controls.enabled = true;
+      }
     }
-  }, [showTransform]);
+  }, [controls, showTransform]);
 
   useEffect(() => {
     if (!showTransform) return;
@@ -487,12 +649,15 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
 
   useEffect(() => {
     return () => {
+      if (controls) {
+        controls.enabled = true;
+      }
       if (transformSyncRafRef.current !== null) {
         window.cancelAnimationFrame(transformSyncRafRef.current);
         transformSyncRafRef.current = null;
       }
     };
-  }, []);
+  }, [controls]);
 
   return (
     <>
@@ -513,6 +678,8 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
           position={position}
           rotation={rotation}
           onClick={data.type === 'hardware' ? undefined : handleClick}
+          onPointerEnter={handlePointerEnter}
+          onPointerLeave={handlePointerLeave}
           castShadow
           receiveShadow
         >

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment } from '@react-three/drei';
+import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '../store';
 import { PartData } from '../types';
@@ -26,10 +26,16 @@ const ControlsRecovery: React.FC = () => {
     const domElement = gl.domElement;
     domElement.addEventListener('contextmenu', preventContextMenu);
     domElement.addEventListener('pointercancel', recoverControls, { passive: true });
+    domElement.addEventListener('pointerup', recoverControls, { passive: true });
+    domElement.addEventListener('mouseup', recoverControls, { passive: true });
+    domElement.addEventListener('touchend', recoverControls, { passive: true });
     domElement.addEventListener('touchcancel', recoverControls, { passive: true });
     domElement.addEventListener('lostpointercapture', recoverControls, { passive: true });
 
     window.addEventListener('pointercancel', recoverControls, { passive: true });
+    window.addEventListener('pointerup', recoverControls, { passive: true });
+    window.addEventListener('mouseup', recoverControls, { passive: true });
+    window.addEventListener('touchend', recoverControls, { passive: true });
     window.addEventListener('touchcancel', recoverControls, { passive: true });
     window.addEventListener('blur', recoverControls);
     document.addEventListener('visibilitychange', recoverControls);
@@ -37,9 +43,15 @@ const ControlsRecovery: React.FC = () => {
     return () => {
       domElement.removeEventListener('contextmenu', preventContextMenu);
       domElement.removeEventListener('pointercancel', recoverControls);
+      domElement.removeEventListener('pointerup', recoverControls);
+      domElement.removeEventListener('mouseup', recoverControls);
+      domElement.removeEventListener('touchend', recoverControls);
       domElement.removeEventListener('touchcancel', recoverControls);
       domElement.removeEventListener('lostpointercapture', recoverControls);
       window.removeEventListener('pointercancel', recoverControls);
+      window.removeEventListener('pointerup', recoverControls);
+      window.removeEventListener('mouseup', recoverControls);
+      window.removeEventListener('touchend', recoverControls);
       window.removeEventListener('touchcancel', recoverControls);
       window.removeEventListener('blur', recoverControls);
       document.removeEventListener('visibilitychange', recoverControls);
@@ -119,7 +131,7 @@ const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({
 };
 
 export const Scene: React.FC = () => {
-  const { parts, selectPart, setHoveredId, floorEnabled, cameraFocusRequest } = useStore();
+  const { parts, selectPart, setHoveredId, floorEnabled, shadowsEnabled, cameraFocusRequest } = useStore();
   const blurActiveInput = () => {
     const activeElement = document.activeElement as HTMLElement | null;
     if (!activeElement) return;
@@ -150,6 +162,9 @@ export const Scene: React.FC = () => {
     setHoveredId(null);
   };
 
+  const ambientIntensity = shadowsEnabled ? 0.34 : 0.5;
+  const keyLightIntensity = shadowsEnabled ? 1.2 : 1;
+
   return (
     <div
       className="w-full h-full bg-slate-100 touch-none select-none"
@@ -157,39 +172,46 @@ export const Scene: React.FC = () => {
       onContextMenu={(event) => event.preventDefault()}
     >
       <Canvas
-        shadows
+        shadows={shadowsEnabled}
         camera={{ position: [50, 50, 50], fov: 45 }}
         onPointerMissed={handleMissed}
         style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
       >
         <ControlsRecovery />
         <AutoCenterCamera parts={parts} focusToken={cameraFocusRequest} />
-        <ambientLight intensity={0.5} />
+        <ambientLight intensity={ambientIntensity} />
         <directionalLight
           position={[50, 50, 25]}
-          intensity={1}
-          castShadow
-          shadow-mapSize={[2048, 2048]}
+          intensity={keyLightIntensity}
+          castShadow={shadowsEnabled}
+          shadow-mapSize={shadowsEnabled ? [4096, 4096] : [1024, 1024]}
+          shadow-bias={-0.00025}
+          shadow-normalBias={0.025}
+          shadow-camera-near={1}
+          shadow-camera-far={280}
+          shadow-camera-left={-150}
+          shadow-camera-right={150}
+          shadow-camera-top={150}
+          shadow-camera-bottom={-150}
         />
+        <directionalLight position={[-40, 35, -35]} intensity={0.25} />
         <Environment preset="city" />
 
-        <Grid
-          args={[1000, 1000]}
-          cellSize={1} // 1 inch grid
-          cellThickness={0.5}
-          cellColor="#e5e7eb"
-          sectionSize={12} // 1 foot major lines
-          sectionThickness={1}
-          sectionColor="#d1d5db"
-          fadeDistance={500}
-          infiniteGrid
-        />
+        {/* Depth-tested grid helpers avoid overlay artifacts on top of model geometry. */}
+        <gridHelper args={[960, 960, '#e5e7eb', '#e5e7eb']} position={[0, 0, 0]} />
+        <gridHelper args={[960, 80, '#d1d5db', '#d1d5db']} position={[0, 0.001, 0]} />
         
         {/* Ground plane for reference */}
         {floorEnabled && (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
             <planeGeometry args={[1000, 1000]} />
             <meshStandardMaterial color="#e2e8f0" />
+          </mesh>
+        )}
+        {shadowsEnabled && !floorEnabled && (
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.011, 0]} receiveShadow>
+            <planeGeometry args={[1000, 1000]} />
+            <shadowMaterial opacity={0.33} transparent />
           </mesh>
         )}
 
