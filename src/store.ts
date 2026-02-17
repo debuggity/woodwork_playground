@@ -628,6 +628,8 @@ interface AppState {
   toggleFloor: () => void;
   shadowsEnabled: boolean;
   toggleShadows: () => void;
+  structuralOverlayEnabled: boolean;
+  toggleStructuralOverlay: () => void;
   requestCameraFocus: () => void;
   setExplodeFactor: (value: number) => void;
 }
@@ -645,6 +647,7 @@ export const useStore = create<AppState>((set) => ({
   edgeSnapEnabled: true,
   floorEnabled: false,
   shadowsEnabled: false,
+  structuralOverlayEnabled: false,
 
   addPart: (part) => set((state) =>
     withHistory(state, [...state.parts, part], {
@@ -1219,6 +1222,8 @@ export const useStore = create<AppState>((set) => ({
   toggleFloor: () => set((state) => ({ floorEnabled: !state.floorEnabled })),
 
   toggleShadows: () => set((state) => ({ shadowsEnabled: !state.shadowsEnabled })),
+
+  toggleStructuralOverlay: () => set((state) => ({ structuralOverlayEnabled: !state.structuralOverlayEnabled })),
 
   requestCameraFocus: () => set((state) => ({ cameraFocusRequest: state.cameraFocusRequest + 1 })),
 

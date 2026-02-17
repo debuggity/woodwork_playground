@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { useStore } from '../store';
 import { PartData } from '../types';
 import { PartObject } from './PartObject';
+import { analyzeStructuralIntegrity } from '../structuralAnalysis';
 
 const ControlsRecovery: React.FC = () => {
   const controls = useThree((state) => state.controls as { enabled?: boolean } | undefined);
@@ -131,7 +132,15 @@ const AutoCenterCamera: React.FC<{ parts: PartData[]; focusToken: number }> = ({
 };
 
 export const Scene: React.FC = () => {
-  const { parts, selectPart, setHoveredId, floorEnabled, shadowsEnabled, cameraFocusRequest } = useStore();
+  const {
+    parts,
+    selectPart,
+    setHoveredId,
+    floorEnabled,
+    shadowsEnabled,
+    structuralOverlayEnabled,
+    cameraFocusRequest,
+  } = useStore();
   const blurActiveInput = () => {
     const activeElement = document.activeElement as HTMLElement | null;
     if (!activeElement) return;
@@ -157,13 +166,15 @@ export const Scene: React.FC = () => {
     return [sum[0] / parts.length, sum[1] / parts.length, sum[2] / parts.length];
   }, [parts]);
 
+  const structuralReport = useMemo(() => analyzeStructuralIntegrity(parts), [parts, structuralOverlayEnabled]);
+
   const handleMissed = () => {
     selectPart(null);
     setHoveredId(null);
   };
 
-  const ambientIntensity = shadowsEnabled ? 0.34 : 0.5;
-  const keyLightIntensity = shadowsEnabled ? 1.2 : 1;
+  const ambientIntensity = shadowsEnabled ? 0.24 : 0.5;
+  const keyLightIntensity = shadowsEnabled ? 1.35 : 1;
 
   return (
     <div
@@ -185,8 +196,8 @@ export const Scene: React.FC = () => {
           intensity={keyLightIntensity}
           castShadow={shadowsEnabled}
           shadow-mapSize={shadowsEnabled ? [4096, 4096] : [1024, 1024]}
-          shadow-bias={-0.00025}
-          shadow-normalBias={0.025}
+          shadow-bias={-0.0001}
+          shadow-normalBias={0.016}
           shadow-camera-near={1}
           shadow-camera-far={280}
           shadow-camera-left={-150}
@@ -194,12 +205,14 @@ export const Scene: React.FC = () => {
           shadow-camera-top={150}
           shadow-camera-bottom={-150}
         />
-        <directionalLight position={[-40, 35, -35]} intensity={0.25} />
+        <directionalLight position={[-40, 35, -35]} intensity={0.12} />
         <Environment preset="city" />
 
-        {/* Depth-tested grid helpers avoid overlay artifacts on top of model geometry. */}
-        <gridHelper args={[960, 960, '#e5e7eb', '#e5e7eb']} position={[0, 0, 0]} />
-        <gridHelper args={[960, 80, '#d1d5db', '#d1d5db']} position={[0, 0.001, 0]} />
+        {/* Use a single grid layer to avoid line-layer shimmer while orbiting the camera. */}
+        <gridHelper
+          args={[960, 240, '#dbe1e8', '#dbe1e8']}
+          position={[0, 0, 0]}
+        />
         
         {/* Ground plane for reference */}
         {floorEnabled && (
@@ -209,9 +222,9 @@ export const Scene: React.FC = () => {
           </mesh>
         )}
         {shadowsEnabled && !floorEnabled && (
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.011, 0]} receiveShadow>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.025, 0]} receiveShadow>
             <planeGeometry args={[1000, 1000]} />
-            <shadowMaterial opacity={0.33} transparent />
+            <shadowMaterial opacity={0.3} transparent />
           </mesh>
         )}
 
@@ -222,6 +235,9 @@ export const Scene: React.FC = () => {
             partIndex={index}
             totalParts={parts.length}
             assemblyCenter={assemblyCenter}
+            structuralOverlayEnabled={structuralOverlayEnabled}
+            structuralScore={structuralReport.partScores[part.id] ?? null}
+            structuralField={structuralReport.partFields[part.id] ?? null}
           />
         ))}
 

@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Bomb, Scissors, Undo2, Redo2, Sun } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2 } from 'lucide-react';
 import { CutCorner, PartData } from '../types';
 import * as THREE from 'three';
+import { analyzeStructuralIntegrity } from '../structuralAnalysis';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
@@ -610,6 +611,8 @@ export const Toolbar: React.FC = () => {
     toggleFloor,
     shadowsEnabled,
     toggleShadows,
+    structuralOverlayEnabled,
+    toggleStructuralOverlay,
     requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
@@ -622,7 +625,8 @@ export const Toolbar: React.FC = () => {
   const specialMenuRef = useRef<HTMLDivElement>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportName, setExportName] = useState('wood-project');
-  const [isExplosionPanelOpen, setIsExplosionPanelOpen] = useState(false);
+  const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
+  const [isControlPanelMinimized, setIsControlPanelMinimized] = useState(false);
   const [isSpecialMenuOpen, setIsSpecialMenuOpen] = useState(false);
   const [autoScrewFirstId, setAutoScrewFirstId] = useState<string | null>(null);
   const [autoScrewStatus, setAutoScrewStatus] = useState<{ tone: 'info' | 'success' | 'error'; text: string } | null>(null);
@@ -631,6 +635,13 @@ export const Toolbar: React.FC = () => {
   const autoScrewFirstPart = autoScrewFirstId ? parts.find((part) => part.id === autoScrewFirstId) : null;
   const canUndo = pastParts.length > 0;
   const canRedo = futureParts.length > 0;
+  const structuralReport = useMemo(() => analyzeStructuralIntegrity(parts), [parts, structuralOverlayEnabled]);
+  const structuralPercent = Math.round(structuralReport.overallScore * 100);
+  const gradeToneClass = structuralReport.overallScore >= 0.82
+    ? 'text-emerald-300'
+    : structuralReport.overallScore >= 0.65
+      ? 'text-amber-300'
+      : 'text-rose-300';
   const selectedHinge = selectedPart?.hardwareKind === 'hinge' ? selectedPart : null;
   const hingeRangeRad = (() => {
     const defaultMin = (-110 * Math.PI) / 180;
@@ -889,7 +900,8 @@ export const Toolbar: React.FC = () => {
 
   return (
     <>
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-1.5 sm:p-2 flex flex-wrap items-center justify-center gap-0.5 sm:gap-2 z-20 max-w-[calc(100%-0.5rem)]">
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-1.5 sm:p-2 flex flex-col gap-1 z-20 max-w-[calc(100%-0.5rem)] overflow-visible">
+        <div className="flex flex-wrap items-center justify-center gap-0.5 sm:gap-2">
         {tools.map((t) => (
           <button
             key={t.id}
@@ -967,73 +979,236 @@ export const Toolbar: React.FC = () => {
           <LocateFixed size={18} />
         </button>
 
+        </div>
+
+        <div className="w-full flex items-center justify-center gap-1 sm:gap-1.5 flex-nowrap overflow-visible">
+
         <div className="relative">
           <button
             onClick={() => {
               setIsSpecialMenuOpen(false);
-              setIsExplosionPanelOpen((prev) => !prev);
+              setIsControlPanelOpen((prev) => {
+                const next = !prev;
+                if (next) {
+                  setIsControlPanelMinimized(false);
+                }
+                return next;
+              });
             }}
             className={`inline-flex items-center justify-center gap-0 sm:gap-1.5 px-1.5 sm:px-2 py-1.5 sm:py-2 min-w-9 rounded-md transition-colors ${
-              isExplosionPanelOpen
-                ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300'
+              isControlPanelOpen
+                ? 'bg-cyan-100 text-cyan-700 ring-1 ring-cyan-300'
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
-            title="Explosion Slider"
+            title="Control Panel"
             aria-haspopup="dialog"
-            aria-expanded={isExplosionPanelOpen}
+            aria-expanded={isControlPanelOpen}
           >
-            <Bomb size={14} />
+            <Cpu size={14} />
+            <span className="hidden sm:inline text-xs font-medium">Control Panel</span>
             <span className="hidden sm:inline-flex">
-              {isExplosionPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {isControlPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </span>
           </button>
 
-          {isExplosionPanelOpen && (
-            <div className="fixed left-1/2 -translate-x-1/2 top-[5.75rem] sm:top-[4.25rem] z-30 w-[min(22rem,calc(100vw-0.75rem))] rounded-xl border border-amber-300/50 bg-slate-950/90 shadow-[0_0_40px_rgba(251,146,60,0.22)] backdrop-blur-md p-3">
-              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-amber-300">
-                <span>Explosion Matrix</span>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-amber-100">{explodeFactor.toFixed(2)}</span>
-                  <button
-                    onClick={() => setIsExplosionPanelOpen(false)}
-                    className="inline-flex items-center justify-center rounded p-1 text-amber-200 hover:text-amber-50 hover:bg-amber-500/15 transition-colors"
-                    title="Minimize Explosion Slider"
-                    aria-label="Minimize explosion slider"
-                  >
-                    <ChevronDown size={13} />
-                  </button>
+          {isControlPanelOpen && (
+            <div className={`fixed right-2 sm:right-3 top-[6.65rem] sm:top-[5.1rem] z-30 w-[min(19.5rem,calc(100vw-0.75rem))] overflow-y-auto rounded-xl border border-cyan-300/40 bg-slate-950/78 shadow-[0_0_34px_rgba(34,211,238,0.2)] backdrop-blur-md p-2 sm:p-2.5 [scrollbar-width:thin] [scrollbar-color:#22d3ee66_#0f172a] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-900/70 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-cyan-300/85 [&::-webkit-scrollbar-thumb]:to-blue-500/80 [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-cyan-100/40 ${
+              isControlPanelMinimized ? 'max-h-[10vh] sm:max-h-[11vh]' : 'max-h-[34vh] sm:max-h-[38vh]'
+            }`}>
+              <div className="relative">
+              <button
+                onClick={() => setIsControlPanelMinimized((prev) => !prev)}
+                className="absolute right-1 top-1 sm:right-1.5 sm:top-1.5 inline-flex items-center justify-center rounded p-1 text-cyan-200 hover:text-cyan-50 hover:bg-cyan-500/15 transition-colors z-10"
+                title={isControlPanelMinimized ? 'Expand Control Panel' : 'Minimize Control Panel'}
+                aria-label={isControlPanelMinimized ? 'Expand control panel' : 'Minimize control panel'}
+              >
+                {isControlPanelMinimized ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+              <div className="flex min-h-[1.35rem] items-center justify-between pr-9 sm:pr-10 text-[10px] uppercase tracking-[0.22em] text-cyan-300">
+                <span>Future Build Console</span>
+                <div className="flex items-center">
+                  <span className="font-mono text-cyan-100">{structuralPercent}%</span>
                 </div>
               </div>
-              <div className="mt-1 text-sm font-semibold text-amber-50">
-                Explosion Slider
-              </div>
-              <div className="mt-1 text-[11px] text-amber-100/80">
-                Click the <span className="font-semibold">Explosion button</span> again to collapse this panel.
-              </div>
-              <div className="mt-2 px-1">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={explodeFactor}
-                  onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
-                  className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-amber-400"
-                  aria-label="Explosion slider"
-                />
-                <div className="mt-1 flex justify-between text-[10px] font-mono text-amber-200/90">
-                  <span>0.00 NORMAL</span>
-                  <span>1.00 FULL EXPLODE</span>
+              {!isControlPanelMinimized && (
+                <>
+                  <div className="mt-1 text-sm font-semibold text-cyan-50">
+                    Futuristic Control Panel
+                  </div>
+                  <div className="mt-1 text-[11px] text-cyan-100/80">
+                    Diagnostic tools and visual analyzers for fast design feedback.
+                  </div>
+                </>
+              )}
+
+              {isControlPanelMinimized ? (
+                <div className="mt-1 grid grid-cols-1 gap-1">
+                  <div className="rounded-lg border border-cyan-300/25 bg-slate-900/75 p-1">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
+                        <Maximize2 size={12} />
+                        Explosion
+                      </div>
+                      <div className="font-mono text-[11px] text-cyan-100">{explodeFactor.toFixed(2)}</div>
+                    </div>
+                    <div className="mt-0.5 px-0.5">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={explodeFactor}
+                        onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+                        className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400"
+                        aria-label="Explosion slider"
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-cyan-300/25 bg-slate-900/75 p-1">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
+                        <Shield size={12} />
+                        Heat Map
+                      </div>
+                      <button
+                        onClick={toggleStructuralOverlay}
+                        className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+                          structuralOverlayEnabled
+                            ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-300/40'
+                            : 'bg-slate-800 text-slate-300 border border-slate-700'
+                        }`}
+                      >
+                        {structuralOverlayEnabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-300 via-orange-400 to-red-500 transition-[width] duration-150"
-                  style={{ width: `${explodeFactor * 100}%` }}
-                />
-              </div>
-              <div className="mt-2 text-[11px] text-amber-100/80">
-                Pull the model apart to inspect fit, order, and spacing.
+              ) : (
+                <div className="mt-1.5 grid grid-cols-1 gap-2">
+                  <div className="rounded-lg border border-cyan-300/25 bg-slate-900/75 p-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
+                        <Maximize2 size={12} />
+                        Explosion
+                      </div>
+                      <div className="font-mono text-[11px] text-cyan-100">{explodeFactor.toFixed(2)}</div>
+                    </div>
+                    <div className="mt-1 px-1">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={explodeFactor}
+                        onChange={(e) => setExplodeFactor(parseFloat(e.target.value))}
+                        className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400"
+                        aria-label="Explosion slider"
+                      />
+                      <div className="mt-1 flex justify-between text-[10px] font-mono text-cyan-100/80">
+                        <span>0.00 NORMAL</span>
+                        <span>1.00 FULL EXPLODE</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-cyan-300/25 bg-slate-900/75 p-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
+                        <Shield size={12} />
+                        Structural Scan
+                      </div>
+                      <button
+                        onClick={toggleStructuralOverlay}
+                        className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+                          structuralOverlayEnabled
+                            ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-300/40'
+                            : 'bg-slate-800 text-slate-300 border border-slate-700'
+                        }`}
+                      >
+                        {structuralOverlayEnabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+
+                    <div className="mt-2 flex items-end justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] text-cyan-100/80">Integrity Grade</div>
+                        <div className={`text-2xl font-semibold ${gradeToneClass}`}>
+                          {structuralReport.grade}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[11px] text-cyan-100/80">Stability Index</div>
+                        <div className="font-mono text-lg text-cyan-100">{structuralPercent}%</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-rose-500 via-amber-400 to-cyan-400 transition-[width] duration-200"
+                        style={{ width: `${structuralPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 flex justify-between text-[10px] text-cyan-100/70">
+                      <span>Weak</span>
+                      <span>Strong</span>
+                    </div>
+                    <div className="mt-1 text-[10px] font-mono text-cyan-200/80">
+                      Heat map: red = high risk, amber = moderate, cyan = reinforced.
+                    </div>
+
+                    <div className="mt-2 text-[11px] text-cyan-100/80">
+                      {structuralOverlayEnabled
+                        ? 'Heat map overlay active on all wood pieces.'
+                        : 'Enable overlay to see stability heat map directly on parts.'}
+                    </div>
+                    <div className="mt-1 text-[11px] text-cyan-100/80">
+                      {structuralReport.recommendation}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-cyan-300/25 bg-slate-900/75 p-1.5">
+                    <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300/90">
+                      <ActivitySquare size={12} />
+                      Build Telemetry
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="text-[10px] text-slate-400">Wood Pieces</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.woodPartCount}</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="text-[10px] text-slate-400">Fasteners</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.fastenerCount}</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="text-[10px] text-slate-400">Joined Fasteners</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.bridgingFasteners}</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="text-[10px] text-slate-400">Est. Weight</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.estimatedWeightLb.toFixed(1)} lb</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="text-[10px] text-slate-400">Footprint</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.footprintSqFt.toFixed(2)} ft^2</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="inline-flex items-center gap-1 text-[10px] text-slate-400"><Layers size={10} />Groups</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.connectedGroups}</div>
+                      </div>
+                      <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
+                        <div className="inline-flex items-center gap-1 text-[10px] text-slate-400"><Gauge size={10} />Max Span</div>
+                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.maxSpanIn.toFixed(1)} in</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-cyan-100/80">
+                      <div>Support Coverage: {(structuralReport.stats.supportCoverage * 100).toFixed(0)}%</div>
+                      <div>Symmetry Index: {(structuralReport.stats.symmetryScore * 100).toFixed(0)}%</div>
+                      <div>Fastener Engagement: {(structuralReport.stats.fastenerEngagement * 100).toFixed(0)}%</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               </div>
             </div>
           )}
@@ -1060,7 +1235,7 @@ export const Toolbar: React.FC = () => {
           </button>
 
           {isSpecialMenuOpen && (
-            <div className="absolute right-0 top-full mt-2 w-52 rounded-lg border border-slate-200 bg-white shadow-xl p-1.5 z-30">
+            <div className="absolute right-0 top-full mt-2 w-52 rounded-lg border border-slate-200 bg-white shadow-xl p-1.5 z-50">
               <div className="px-2.5 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                 Building
               </div>
@@ -1068,6 +1243,7 @@ export const Toolbar: React.FC = () => {
                 onClick={handleActivateAutoScrew}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Automatically place screws between two selected wood pieces."
               >
                 <span className="flex items-center gap-2">
                   <Hammer size={16} />
@@ -1080,6 +1256,7 @@ export const Toolbar: React.FC = () => {
                 onClick={handleTrimOverlaps}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Trim away overlapping regions from the selected wood or sheet piece."
               >
                 <span className="flex items-center gap-2">
                   <Scissors size={16} />
@@ -1095,6 +1272,7 @@ export const Toolbar: React.FC = () => {
                 onClick={toggleSnap}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Snap move/rotate steps to fixed increments for cleaner alignment."
               >
                 <span className="flex items-center gap-2">
                   <Magnet size={16} />
@@ -1107,6 +1285,7 @@ export const Toolbar: React.FC = () => {
                 onClick={toggleEdgeSnap}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Snap wood edges together automatically when moved close."
               >
                 <span className="flex items-center gap-2">
                   <Magnet size={16} />
@@ -1123,6 +1302,7 @@ export const Toolbar: React.FC = () => {
                 onClick={toggleFloor}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Show or hide the ground reference floor."
               >
                 <span className="flex items-center gap-2">
                   <Grid size={16} />
@@ -1135,6 +1315,7 @@ export const Toolbar: React.FC = () => {
                 onClick={toggleShadows}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
                 role="menuitem"
+                title="Enable higher-quality cast shadows for better depth and realism."
               >
                 <span className="flex items-center gap-2">
                   <Sun size={16} />
@@ -1147,6 +1328,7 @@ export const Toolbar: React.FC = () => {
                 onClick={handleReset}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-red-600 hover:bg-red-50 transition-colors"
                 role="menuitem"
+                title="Clear all parts and reset the scene."
               >
                 <span className="flex items-center gap-2">
                   <RotateCcw size={16} />
@@ -1156,8 +1338,6 @@ export const Toolbar: React.FC = () => {
             </div>
           )}
         </div>
-
-        <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
         <div className="inline-flex items-center gap-0.5 sm:gap-1 shrink-0 whitespace-nowrap">
           <button
@@ -1184,21 +1364,22 @@ export const Toolbar: React.FC = () => {
           accept=".json"
           className="hidden"
         />
+        </div>
       </div>
 
       {tool === 'auto-screw' && (
-        <div className="absolute top-[4.1rem] left-1/2 -translate-x-1/2 z-20 w-[min(33rem,calc(100%-1rem))] rounded-xl border border-blue-200 bg-white/95 backdrop-blur shadow-lg px-3 py-2.5">
-          <div className="flex items-start justify-between gap-3">
+        <div className="fixed top-[7rem] sm:top-[6.2rem] left-1/2 -translate-x-1/2 z-10 w-[min(25rem,calc(100%-0.8rem))] rounded-lg border border-blue-200 bg-white/95 backdrop-blur shadow-lg px-2.5 py-2">
+          <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">Auto Screw Mode</div>
-              <div className="mt-0.5 text-sm text-slate-700">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Auto Screw Mode</div>
+              <div className="mt-0.5 text-xs text-slate-700">
                 {!autoScrewFirstPart
                   ? 'Step 1: Select the entry piece (screw head side).'
                   : `Step 2: Select the destination piece to join with ${autoScrewFirstPart.name}.`}
               </div>
               {autoScrewStatus && (
                 <div
-                  className={`mt-1.5 text-xs ${
+                  className={`mt-1 text-[11px] ${
                     autoScrewStatus.tone === 'success'
                       ? 'text-emerald-700'
                       : autoScrewStatus.tone === 'error'
@@ -1209,13 +1390,13 @@ export const Toolbar: React.FC = () => {
                   {autoScrewStatus.text}
                 </div>
               )}
-              <div className="mt-1 text-[11px] text-slate-500">
-                Hovered piece highlights in green. Auto Screw stays active for rapid placement.
+              <div className="mt-1 text-[10px] text-slate-500">
+                Hovered piece highlights in green.
               </div>
             </div>
             <button
               onClick={handleExitAutoScrew}
-              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100 transition-colors"
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] text-red-700 hover:bg-red-100 transition-colors"
               title="Exit Auto Screw Mode"
             >
               <X size={12} />
@@ -1311,3 +1492,4 @@ export const Toolbar: React.FC = () => {
     </>
   );
 };
+

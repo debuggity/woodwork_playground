@@ -4,12 +4,16 @@ import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '../store';
 import { CutCorner, PartData } from '../types';
+import { getStructuralHeatColor, StructuralPartField } from '../structuralAnalysis';
 
 interface PartObjectProps {
   data: PartData;
   partIndex: number;
   totalParts: number;
   assemblyCenter: [number, number, number];
+  structuralOverlayEnabled: boolean;
+  structuralScore: number | null;
+  structuralField: StructuralPartField | null;
 }
 
 const SELECTION_SUPPRESS_MS = 180;
@@ -85,6 +89,7 @@ const clampCut = (value: number, maxValue: number) => {
 };
 
 const clampMiterAngle = (degrees: number) => Math.max(-80, Math.min(80, degrees));
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const EDGE_SNAP_THRESHOLD = 0.35;
 const EDGE_SNAP_MIN_OVERLAP = 0.2;
 
@@ -290,7 +295,15 @@ const hashString = (value: string) => {
   return Math.abs(hash);
 };
 
-export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partIndex, totalParts, assemblyCenter }) => {
+export const PartObject: React.FC<PartObjectProps> = React.memo(({
+  data,
+  partIndex,
+  totalParts,
+  assemblyCenter,
+  structuralOverlayEnabled,
+  structuralScore,
+  structuralField,
+}) => {
   const controls = useThree((state) => state.controls as { enabled?: boolean } | undefined);
   const isSelected = useStore((state) => state.selectedId === data.id);
   const isHoveredInSceneList = useStore((state) => state.hoveredId === data.id);
@@ -354,6 +367,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
   const position = useMemo(() => new THREE.Vector3(...data.position), [data.position]);
   const rotation = useMemo(() => new THREE.Euler(...data.rotation), [data.rotation]);
   const [width, height, depth] = data.dimensions;
+  const structuralHeatColor = useMemo(() => {
+    if (!structuralOverlayEnabled || data.type === 'hardware' || structuralScore === null) return null;
+    return getStructuralHeatColor(structuralScore);
+  }, [data.type, structuralOverlayEnabled, structuralScore]);
+
   const explodeMotion = useMemo(() => {
     const idHash = hashString(data.id);
     const direction = new THREE.Vector3(
@@ -474,6 +492,115 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     return new THREE.EdgesGeometry(geometry);
   }, [data.type, geometry]);
 
+  const heatOverlayGeometry = useMemo(() => {
+    if (data.type === 'hardware' || !structuralOverlayEnabled || !structuralField) return null;
+
+    const cloned = geometry.clone();
+    const positionAttr = cloned.getAttribute('position');
+    if (!positionAttr) return null;
+
+    const colorArray = new Float32Array(positionAttr.count * 3);
+    const localPoint = new THREE.Vector3();
+    const worldPoint = new THREE.Vector3();
+
+    const partQuat = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(data.rotation[0], data.rotation[1], data.rotation[2], 'XYZ')
+    );
+    const invPartQuat = partQuat.clone().invert();
+    const partPos = new THREE.Vector3(...data.position);
+
+    const worldToLocalPoint = (point: { x: number; y: number; z: number }) =>
+      new THREE.Vector3(point.x, point.y, point.z).sub(partPos).applyQuaternion(invPartQuat);
+
+    const supportLocals = structuralField.supportPoints.map((point) => ({
+      pos: worldToLocalPoint(point),
+      intensity: point.intensity,
+    }));
+    const loadLocals = structuralField.loadPoints.map((point) => ({
+      pos: worldToLocalPoint(point),
+      intensity: point.intensity,
+    }));
+    const fastenerLocals = structuralField.fastenerPoints.map((point) => ({
+      pos: worldToLocalPoint(point),
+      intensity: point.intensity,
+    }));
+
+    const supportRadius = Math.max(Math.min(width, depth) * 0.35, 1.2);
+    const loadRadius = Math.max(Math.max(width, depth) * 0.28, 1.5);
+    const fastenerRadius = Math.max(Math.min(width, depth) * 0.2, 0.9);
+    const halfW = Math.max(width / 2, 0.01);
+    const halfD = Math.max(depth / 2, 0.01);
+
+    for (let i = 0; i < positionAttr.count; i += 1) {
+      localPoint.fromBufferAttribute(positionAttr as THREE.BufferAttribute, i);
+      worldPoint.copy(localPoint).applyQuaternion(partQuat).add(partPos);
+
+      const supportInfluence = supportLocals.reduce((best, point) => {
+        const distance = localPoint.distanceTo(point.pos);
+        const falloff = Math.exp(-(distance * distance) / (2 * supportRadius * supportRadius)) * point.intensity;
+        return Math.max(best, falloff);
+      }, 0);
+
+      const fastenerInfluence = fastenerLocals.reduce((best, point) => {
+        const distance = localPoint.distanceTo(point.pos);
+        const falloff = Math.exp(-(distance * distance) / (2 * fastenerRadius * fastenerRadius)) * point.intensity;
+        return Math.max(best, falloff);
+      }, 0);
+
+      const loadInfluence = loadLocals.reduce((best, point) => {
+        const distance = localPoint.distanceTo(point.pos);
+        const falloff = Math.exp(-(distance * distance) / (2 * loadRadius * loadRadius)) * point.intensity;
+        return Math.max(best, falloff);
+      }, 0);
+
+      const spanCoord = structuralField.primarySpanAxis === 'x'
+        ? Math.abs(localPoint.x) / halfW
+        : Math.abs(localPoint.z) / halfD;
+      const freeSpanRisk = clamp(spanCoord, 0, 1);
+
+      const edgeDistanceX = Math.max(0, halfW - Math.abs(localPoint.x));
+      const edgeDistanceZ = Math.max(0, halfD - Math.abs(localPoint.z));
+      const minEdgeDistance = Math.min(edgeDistanceX, edgeDistanceZ);
+      const edgeRisk = clamp(1 - minEdgeDistance / Math.max(Math.min(halfW, halfD), 0.3), 0, 1);
+
+      const baseRisk = 1 - structuralField.baseStability;
+      const supportSpanRisk = clamp(1 - structuralField.supportPatternScore, 0, 1);
+      const sagRisk = clamp((worldPoint.y - data.position[1]) / Math.max(height, 0.5), -0.2, 1);
+      const risk = clamp(
+        baseRisk * 0.35
+          + supportSpanRisk * 0.24
+          + loadInfluence * 0.44
+          + freeSpanRisk * 0.2
+          + edgeRisk * 0.1
+          + Math.max(0, sagRisk) * 0.08
+          - supportInfluence * 0.5
+          - fastenerInfluence * 0.24,
+        0,
+        1
+      );
+
+      const localStability = 1 - risk;
+      const stability = clamp(localStability * 0.56 + structuralField.baseStability * 0.44, 0, 1);
+      const color = new THREE.Color(getStructuralHeatColor(stability));
+      colorArray[i * 3] = color.r;
+      colorArray[i * 3 + 1] = color.g;
+      colorArray[i * 3 + 2] = color.b;
+    }
+
+    cloned.setAttribute('color', new THREE.Float32BufferAttribute(colorArray, 3));
+    return cloned;
+  }, [
+    data.position,
+    data.rotation,
+    data.type,
+    depth,
+    geometry,
+    height,
+    structuralField,
+    structuralOverlayEnabled,
+    width,
+  ]);
+
   useEffect(() => {
     return () => {
       geometry.dispose();
@@ -485,6 +612,12 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
       edgeGeometry?.dispose();
     };
   }, [edgeGeometry]);
+
+  useEffect(() => {
+    return () => {
+      heatOverlayGeometry?.dispose();
+    };
+  }, [heatOverlayGeometry]);
 
   useFrame(({ clock }, delta) => {
     const explodeGroup = explodeGroupRef.current;
@@ -512,6 +645,13 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     if (isHoveredInSceneList) {
       material.emissive.set('#16a34a');
       material.emissiveIntensity = 0.3 + (Math.sin(clock.elapsedTime * 9) + 1) * 0.25;
+      return;
+    }
+
+    if (structuralOverlayEnabled && structuralHeatColor) {
+      material.emissive.set(structuralHeatColor);
+      const risk = 1 - (structuralScore ?? 1);
+      material.emissiveIntensity = 0.12 + risk * 0.34 + Math.max(0, Math.sin(clock.elapsedTime * 5 + risk * 8)) * 0.08;
       return;
     }
 
@@ -617,9 +757,18 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
   const hingeKnuckleHeight = Math.max(height * 0.28, 0.18);
   const defaultColor = data.hardwareKind === 'hinge' ? '#64748b' : (data.color || '#eecfa1');
   const fillColor = isHoveredInSceneList ? '#4ade80' : isSelected ? '#ff9f43' : defaultColor;
-  const strokeColor = isHoveredInSceneList ? '#22c55e' : isSelected ? '#ff6b6b' : '#8d6e63';
+  const strokeColor = isHoveredInSceneList
+    ? '#22c55e'
+    : isSelected
+      ? '#ff6b6b'
+      : '#8d6e63';
   const hardwareHitRadius = Math.max(width * 3, 0.45);
   const hardwareHitHeight = Math.max(height + 0.75, 2.5);
+
+  useEffect(() => {
+    if (!materialRef.current) return;
+    materialRef.current.color.set(fillColor);
+  }, [fillColor]);
 
   useEffect(() => {
     if (!showTransform) {
@@ -739,6 +888,28 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
             </lineSegments>
           )}
         </mesh>
+        {data.type !== 'hardware' && structuralOverlayEnabled && heatOverlayGeometry && (
+          <mesh
+            position={position}
+            rotation={rotation}
+            scale={[1.002, 1.002, 1.002]}
+            renderOrder={4}
+            raycast={() => null}
+          >
+            <primitive object={heatOverlayGeometry} attach="geometry" />
+            <meshBasicMaterial
+              vertexColors
+              transparent
+              opacity={isSelected ? 0.36 : 0.5}
+              depthTest
+              depthWrite={false}
+              polygonOffset
+              polygonOffsetFactor={-4}
+              polygonOffsetUnits={-4}
+              toneMapped={false}
+            />
+          </mesh>
+        )}
       </group>
     </>
   );
@@ -747,6 +918,9 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({ data, partInd
     prevProps.data === nextProps.data
     && prevProps.partIndex === nextProps.partIndex
     && prevProps.totalParts === nextProps.totalParts
+    && prevProps.structuralOverlayEnabled === nextProps.structuralOverlayEnabled
+    && prevProps.structuralScore === nextProps.structuralScore
+    && prevProps.structuralField === nextProps.structuralField
     && prevProps.assemblyCenter[0] === nextProps.assemblyCenter[0]
     && prevProps.assemblyCenter[1] === nextProps.assemblyCenter[1]
     && prevProps.assemblyCenter[2] === nextProps.assemblyCenter[2]
