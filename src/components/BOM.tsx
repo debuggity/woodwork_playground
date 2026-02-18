@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { PartData } from '../types';
-import { ClipboardList, ExternalLink, FileDown, ShoppingCart } from 'lucide-react';
+import { ClipboardList, ExternalLink, FileDown, ShoppingCart, ChevronDown } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const roundTo = (value: number) => value.toFixed(3);
 const CUT_PLAN_EPS = 0.0001;
@@ -513,9 +515,219 @@ const calculateShoppingList = (parts: PartData[]) => {
   return shoppingList;
 };
 
+type ReportFormat = 'html' | 'pdf';
+
+const triggerFileDownload = (filename: string, contents: string, mimeType: string) => {
+  const blob = new Blob([contents], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+};
+
+const buildHomeDepotPdf = (rows: Array<{ name: string; qty: number; details: string; url: string }>) => {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const exportedAt = new Date().toLocaleString();
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('Home Depot Shopping Report', 40, 46);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Generated ${exportedAt}`, 40, 64);
+  doc.setTextColor(15, 23, 42);
+
+  autoTable(doc, {
+    startY: 82,
+    head: [['Item', 'Qty', 'Estimate', 'Search Link']],
+    body: rows.map((row) => [row.name, `${row.qty}`, row.details, row.url]),
+    styles: { fontSize: 9, cellPadding: 5, valign: 'top' },
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42] },
+    columnStyles: {
+      1: { cellWidth: 38, halign: 'center' },
+      2: { cellWidth: 170 },
+      3: { cellWidth: 190, textColor: [29, 78, 216] },
+    },
+  });
+
+  doc.save('home-depot-report.pdf');
+};
+
+const svgMarkupToPngDataUrl = (svgMarkup: string, size = 148) =>
+  new Promise<string>((resolve, reject) => {
+    const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          reject(new Error('Could not create canvas context.'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(image, 0, 0, size, size);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error instanceof Error ? error : new Error('Failed to render SVG image.'));
+      }
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load SVG image.'));
+    };
+
+    image.src = url;
+  });
+
+const buildCutReportPdf = async (
+  parts: PartData[],
+  cutList: Array<{ key: string; part: PartData; count: number }>
+) => {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 40;
+  const lineHeight = 13;
+  const cardPadding = 10;
+  const shapeSize = 96;
+  const cardGap = 10;
+  let y = 46;
+
+  const ensureSpace = (needed: number) => {
+    if (y + needed <= pageHeight - margin) return;
+    doc.addPage();
+    y = margin;
+  };
+
+  const writeWrapped = (text: string, x: number, maxWidth: number, size = 10) => {
+    doc.setFontSize(size);
+    const lines = doc.splitTextToSize(text, maxWidth);
+    lines.forEach((line: string) => {
+      ensureSpace(lineHeight);
+      doc.text(line, x, y);
+      y += lineHeight;
+    });
+  };
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('Cut Report', margin, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    `Generated ${new Date().toLocaleString()} | Unique cuts: ${cutList.length} | Total parts: ${parts.length}`,
+    margin,
+    y
+  );
+  doc.setTextColor(15, 23, 42);
+  y += 18;
+
+  for (let index = 0; index < cutList.length; index += 1) {
+    const { part, count } = cutList[index];
+    const profileLabel = formatProfile(part) ?? 'Rectangular profile';
+    const recipe = cutRecipe(part);
+    const steps = recipe?.steps ?? ['No custom cuts required beyond final dimensions.'];
+    const recipeSummary = recipe?.summary ?? 'Standard rectangular cutting';
+    const textX = margin + cardPadding + shapeSize + 12;
+    const textWidth = 612 - margin - textX - cardPadding;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    const titleLines = doc.splitTextToSize(`${index + 1}. ${part.name} (x${count})`, textWidth);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const dimensionLines = doc.splitTextToSize(
+      `Dimensions: ${part.dimensions[0].toFixed(1)}" x ${part.dimensions[1].toFixed(1)}" x ${part.dimensions[2].toFixed(1)}" | Type: ${part.type}`,
+      textWidth
+    );
+    const profileLines = doc.splitTextToSize(`Profile: ${profileLabel}`, textWidth);
+    const summaryLines = doc.splitTextToSize(`Cut Plan: ${recipeSummary}`, textWidth);
+    const stepLines = steps.flatMap((step, stepIndex) =>
+      doc.splitTextToSize(`${stepIndex + 1}. ${step}`, textWidth - 14)
+    );
+
+    const textLineCount = (
+      titleLines.length
+      + dimensionLines.length
+      + profileLines.length
+      + summaryLines.length
+      + stepLines.length
+      + 2
+    );
+    const textBlockHeight = textLineCount * lineHeight + 6;
+    const cardHeight = Math.max(shapeSize + cardPadding * 2, textBlockHeight + cardPadding * 2);
+    ensureSpace(cardHeight + cardGap);
+
+    doc.setDrawColor(203, 213, 225);
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin, y, 612 - margin * 2, cardHeight, 8, 8, 'FD');
+
+    try {
+      const shapePngData = await svgMarkupToPngDataUrl(cutShapeSvg(part), 148);
+      doc.addImage(shapePngData, 'PNG', margin + cardPadding, y + cardPadding, shapeSize, shapeSize);
+    } catch {
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(margin + cardPadding, y + cardPadding, shapeSize, shapeSize);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Shape preview unavailable', margin + cardPadding + 8, y + cardPadding + shapeSize / 2);
+      doc.setTextColor(15, 23, 42);
+    }
+
+    let textY = y + cardPadding + 12;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    titleLines.forEach((line: string) => {
+      doc.text(line, textX, textY);
+      textY += lineHeight;
+    });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    dimensionLines.forEach((line: string) => {
+      doc.text(line, textX, textY);
+      textY += lineHeight;
+    });
+    profileLines.forEach((line: string) => {
+      doc.text(line, textX, textY);
+      textY += lineHeight;
+    });
+    summaryLines.forEach((line: string) => {
+      doc.text(line, textX, textY);
+      textY += lineHeight;
+    });
+    textY += 2;
+    stepLines.forEach((line: string) => {
+      doc.text(line, textX + 14, textY);
+      textY += lineHeight;
+    });
+
+    y += cardHeight + cardGap;
+  }
+
+  doc.save('cut-report.pdf');
+};
+
 export const BOM: React.FC = () => {
   const { parts } = useStore();
   const [tab, setTab] = useState<'cut' | 'shop'>('cut');
+  const [openDownloadMenu, setOpenDownloadMenu] = useState<'cut' | 'shop' | null>(null);
+  const cutDownloadMenuRef = useRef<HTMLDivElement>(null);
+  const shopDownloadMenuRef = useRef<HTMLDivElement>(null);
 
   const shoppingList = useMemo(() => calculateShoppingList(parts), [parts]);
   const cutList = useMemo(() => {
@@ -556,9 +768,26 @@ export const BOM: React.FC = () => {
     });
   }, [parts, shoppingList]);
 
-  const downloadHomeDepotReport = () => {
-    if (homeDepotRows.length === 0) return;
+  useEffect(() => {
+    if (!openDownloadMenu) return;
 
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      const activeRef = openDownloadMenu === 'cut' ? cutDownloadMenuRef : shopDownloadMenuRef;
+      if (!activeRef.current?.contains(target)) {
+        setOpenDownloadMenu(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [openDownloadMenu]);
+
+  useEffect(() => {
+    setOpenDownloadMenu(null);
+  }, [tab]);
+
+  const buildHomeDepotReportHtml = () => {
     const rowsHtml = homeDepotRows
       .map((row) => `
         <tr>
@@ -571,7 +800,7 @@ export const BOM: React.FC = () => {
       .join('');
 
     const exportedAt = new Date().toLocaleString();
-    const html = `<!doctype html>
+    return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -602,20 +831,10 @@ export const BOM: React.FC = () => {
   </table>
 </body>
 </html>`;
-
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'home-depot-report.html';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
-  const downloadCutReport = () => {
-    if (cutList.length === 0) return;
-
-    const cards = cutList.map(({ key, part, count }, index) => {
+  const buildCutReportHtml = () => {
+    const cards = cutList.map(({ part, count }, index) => {
       const profileLabel = formatProfile(part) ?? 'Rectangular profile';
       const recipe = cutRecipe(part);
       const steps = recipe?.steps ?? ['No custom cuts required beyond final dimensions.'];
@@ -638,7 +857,7 @@ export const BOM: React.FC = () => {
     }).join('');
 
     const generatedAt = new Date().toLocaleString();
-    const html = `<!doctype html>
+    return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -669,14 +888,26 @@ export const BOM: React.FC = () => {
   <section class="cards">${cards}</section>
 </body>
 </html>`;
+  };
 
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'cut-report.html';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const downloadHomeDepotReport = (format: ReportFormat) => {
+    if (homeDepotRows.length === 0) return;
+    if (format === 'html') {
+      const html = buildHomeDepotReportHtml();
+      triggerFileDownload('home-depot-report.html', html, 'text/html');
+      return;
+    }
+    buildHomeDepotPdf(homeDepotRows);
+  };
+
+  const downloadCutReport = (format: ReportFormat) => {
+    if (cutList.length === 0) return;
+    if (format === 'html') {
+      const html = buildCutReportHtml();
+      triggerFileDownload('cut-report.html', html, 'text/html');
+      return;
+    }
+    void buildCutReportPdf(parts, cutList);
   };
 
   return (
@@ -718,13 +949,38 @@ export const BOM: React.FC = () => {
           <>
             {tab === 'cut' && (
               <div className="space-y-4">
-                <button
-                  onClick={downloadCutReport}
-                  className="w-full flex items-center justify-center gap-2 py-2 text-xs rounded-md bg-blue-700 text-white font-medium hover:bg-blue-800 transition-colors"
-                >
-                  <FileDown size={14} />
-                  Download Cut Report
-                </button>
+                <div className="relative" ref={cutDownloadMenuRef}>
+                  <button
+                    onClick={() => setOpenDownloadMenu((current) => (current === 'cut' ? null : 'cut'))}
+                    className="w-full flex items-center justify-center gap-2 py-2 text-xs rounded-md bg-blue-700 text-white font-medium hover:bg-blue-800 transition-colors"
+                  >
+                    <FileDown size={14} />
+                    Download Cut Report
+                    <ChevronDown size={14} />
+                  </button>
+                  {openDownloadMenu === 'cut' && (
+                    <div className="absolute left-0 right-0 mt-1 rounded-md border border-slate-200 bg-white shadow-lg overflow-hidden z-20">
+                      <button
+                        onClick={() => {
+                          downloadCutReport('html');
+                          setOpenDownloadMenu(null);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        Download as HTML
+                      </button>
+                      <button
+                        onClick={() => {
+                          downloadCutReport('pdf');
+                          setOpenDownloadMenu(null);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 border-t border-slate-100"
+                      >
+                        Download as PDF
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="flex justify-between text-xs font-semibold text-slate-500 pb-2 border-b border-slate-100">
                   <span>Cut</span>
                   <span>Dimensions (W x H x L)</span>
@@ -782,13 +1038,38 @@ export const BOM: React.FC = () => {
 
             {tab === 'shop' && (
               <div className="space-y-6">
-                <button
-                  onClick={downloadHomeDepotReport}
-                  className="w-full flex items-center justify-center gap-2 py-2 text-xs rounded-md bg-orange-600 text-white font-medium hover:bg-orange-700 transition-colors"
-                >
-                  <ExternalLink size={14} />
-                  Home Depot Report
-                </button>
+                <div className="relative" ref={shopDownloadMenuRef}>
+                  <button
+                    onClick={() => setOpenDownloadMenu((current) => (current === 'shop' ? null : 'shop'))}
+                    className="w-full flex items-center justify-center gap-2 py-2 text-xs rounded-md bg-orange-600 text-white font-medium hover:bg-orange-700 transition-colors"
+                  >
+                    <ExternalLink size={14} />
+                    Home Depot Report
+                    <ChevronDown size={14} />
+                  </button>
+                  {openDownloadMenu === 'shop' && (
+                    <div className="absolute left-0 right-0 mt-1 rounded-md border border-slate-200 bg-white shadow-lg overflow-hidden z-20">
+                      <button
+                        onClick={() => {
+                          downloadHomeDepotReport('html');
+                          setOpenDownloadMenu(null);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        Download as HTML
+                      </button>
+                      <button
+                        onClick={() => {
+                          downloadHomeDepotReport('pdf');
+                          setOpenDownloadMenu(null);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 border-t border-slate-100"
+                      >
+                        Download as PDF
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {Object.entries(shoppingList).map(([name, info]) => (
                   <div key={name} className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                     <div className="font-semibold text-slate-800 mb-1">{name}</div>

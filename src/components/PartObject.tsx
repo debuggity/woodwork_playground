@@ -92,6 +92,8 @@ const clampMiterAngle = (degrees: number) => Math.max(-80, Math.min(80, degrees)
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const EDGE_SNAP_THRESHOLD = 0.35;
 const EDGE_SNAP_MIN_OVERLAP = 0.2;
+const EDGE_SNAP_TOUCH_GAP = 0.35;
+const EDGE_SNAP_EPS = 0.001;
 
 type Aabb3 = {
   minX: number;
@@ -104,6 +106,15 @@ type Aabb3 = {
 
 const getAxisOverlap = (aMin: number, aMax: number, bMin: number, bMax: number) =>
   Math.max(0, Math.min(aMax, bMax) - Math.max(aMin, bMin));
+
+const getAxisGap = (aMin: number, aMax: number, bMin: number, bMax: number) => {
+  if (aMax < bMin) return bMin - aMax;
+  if (bMax < aMin) return aMin - bMax;
+  return 0;
+};
+
+const hasOverlapOrTouch = (overlap: number, gap: number) =>
+  overlap >= EDGE_SNAP_MIN_OVERLAP || gap <= EDGE_SNAP_TOUCH_GAP + EDGE_SNAP_EPS;
 
 const getPartAabbAtPosition = (part: PartData, position: [number, number, number]): Aabb3 => {
   const [w, h, d] = part.dimensions;
@@ -153,7 +164,9 @@ const computeEdgeSnappedPosition = (
     const otherAabb = getPartAabbAtPosition(other, other.position);
     const overlapY = getAxisOverlap(movingAabb.minY, movingAabb.maxY, otherAabb.minY, otherAabb.maxY);
     const overlapZ = getAxisOverlap(movingAabb.minZ, movingAabb.maxZ, otherAabb.minZ, otherAabb.maxZ);
-    if (overlapY >= EDGE_SNAP_MIN_OVERLAP && overlapZ >= EDGE_SNAP_MIN_OVERLAP) {
+    const gapY = getAxisGap(movingAabb.minY, movingAabb.maxY, otherAabb.minY, otherAabb.maxY);
+    const gapZ = getAxisGap(movingAabb.minZ, movingAabb.maxZ, otherAabb.minZ, otherAabb.maxZ);
+    if (hasOverlapOrTouch(overlapY, gapY) && hasOverlapOrTouch(overlapZ, gapZ)) {
       const xCandidates = [
         otherAabb.minX - movingAabb.minX,
         otherAabb.maxX - movingAabb.minX,
@@ -169,7 +182,8 @@ const computeEdgeSnappedPosition = (
     }
 
     const overlapX = getAxisOverlap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
-    if (overlapX >= EDGE_SNAP_MIN_OVERLAP && overlapZ >= EDGE_SNAP_MIN_OVERLAP) {
+    const gapX = getAxisGap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
+    if (hasOverlapOrTouch(overlapX, gapX) && hasOverlapOrTouch(overlapZ, gapZ)) {
       const yCandidates = [
         otherAabb.minY - movingAabb.minY,
         otherAabb.maxY - movingAabb.minY,
@@ -184,7 +198,7 @@ const computeEdgeSnappedPosition = (
       });
     }
 
-    if (overlapX >= EDGE_SNAP_MIN_OVERLAP && overlapY >= EDGE_SNAP_MIN_OVERLAP) {
+    if (hasOverlapOrTouch(overlapX, gapX) && hasOverlapOrTouch(overlapY, gapY)) {
       const zCandidates = [
         otherAabb.minZ - movingAabb.minZ,
         otherAabb.maxZ - movingAabb.minZ,
@@ -199,6 +213,14 @@ const computeEdgeSnappedPosition = (
       });
     }
   });
+
+  // Floor snap while edge snap is enabled: pull the lowest point to Y=0 when close.
+  const floorDelta = -movingAabb.minY;
+  if (Math.abs(floorDelta) <= EDGE_SNAP_THRESHOLD) {
+    if (bestDelta.y === null || Math.abs(floorDelta) < Math.abs(bestDelta.y)) {
+      bestDelta.y = floorDelta;
+    }
+  }
 
   return [
     position[0] + (bestDelta.x ?? 0),
