@@ -333,6 +333,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const tool = useStore((state) => state.tool);
   const snapEnabled = useStore((state) => state.snapEnabled);
   const edgeSnapEnabled = useStore((state) => state.edgeSnapEnabled);
+  const selectAssistEnabled = useStore((state) => state.selectAssistEnabled);
   const explodeFactor = useStore((state) => state.explodeFactor);
   const selectPart = useStore((state) => state.selectPart);
   const setHoveredId = useStore((state) => state.setHoveredId);
@@ -374,14 +375,16 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   };
 
   const handlePointerEnter = (e: ThreeEvent<PointerEvent>) => {
-    if (tool !== 'auto-screw') return;
-    if (data.type === 'hardware') return;
+    const hoverAssistActive = tool === 'auto-screw' || (tool === 'select' && selectAssistEnabled);
+    if (!hoverAssistActive) return;
+    if (tool === 'auto-screw' && data.type === 'hardware') return;
     e.stopPropagation();
     setHoveredId(data.id);
   };
 
   const handlePointerLeave = (e: ThreeEvent<PointerEvent>) => {
-    if (tool !== 'auto-screw') return;
+    const hoverAssistActive = tool === 'auto-screw' || (tool === 'select' && selectAssistEnabled);
+    if (!hoverAssistActive) return;
     e.stopPropagation();
     setHoveredId(null);
   };

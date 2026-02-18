@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Workbench } from './components/Workbench';
 import {
-  ArrowDown,
-  ArrowLeft,
+  ActivitySquare,
   ArrowRight,
   ArrowUp,
+  Cpu,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -16,18 +16,23 @@ import {
   Layers,
   LocateFixed,
   Magnet,
+  Maximize2,
   Move,
   MousePointer2,
   PanelLeft,
   PanelRight,
   Plus,
   Redo2,
+  Scissors,
+  Shield,
+  Sun,
   RotateCw,
   Settings2,
   ShoppingCart,
   Trash2,
   Undo2,
   Upload,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -46,6 +51,7 @@ type TutorialTool = 'select' | 'move' | 'rotate';
 
 const COOKIE_CONSENT_KEY = 'woodworker_cookie_consent';
 const INTERACTIVE_TUTORIAL_SLUG = 'interactive-quickstart-build-your-first-layout';
+const ADVANCED_FEATURES_SLUG = 'advanced-features-special-tools-and-control-panel';
 
 const ROUTE_LABELS: Record<RouteId, string> = {
   home: 'Home',
@@ -68,6 +74,16 @@ const BLOG_POSTS: BlogPost[] = [
     body: [
       'Use this post as a guided warmup before jumping into your real project.',
       'You can practice the core controls right on this page, then switch directly into Build mode.',
+    ],
+  },
+  {
+    slug: ADVANCED_FEATURES_SLUG,
+    title: 'Advanced features guide: special tools + control panel',
+    date: 'February 2026',
+    summary: 'A clear visual guide for Auto Screw, trim/snap helpers, structural heat maps, and control panel workflows.',
+    body: [
+      'This guide focuses on every major feature not covered in the basics quickstart.',
+      'It includes visual UI maps that mirror the real app so you can immediately apply each workflow in Build mode.',
     ],
   },
   {
@@ -287,30 +303,70 @@ const BlogTitleSvg = () => (
   </svg>
 );
 
-const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => (
-  <div className="space-y-4">
-    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 sm:p-8 shadow-sm">
-      <div className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full bg-blue-300/15 blur-3xl" />
-      <div className="pointer-events-none absolute -left-16 -bottom-20 h-52 w-52 rounded-full bg-sky-200/20 blur-3xl" />
-      <div className="relative flex justify-center">
-        <BlogTitleSvg />
-      </div>
-    </section>
-    {BLOG_POSTS.map((post) => (
-      <article key={post.title} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">{post.date}</p>
-        <h3 className="mt-2 text-xl font-semibold text-slate-900">{post.title}</h3>
-        <p className="mt-2 text-slate-700">{post.summary}</p>
-        <button
-          onClick={() => openPost(post.slug)}
-          className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          Read Post
-        </button>
-      </article>
-    ))}
-  </div>
-);
+const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
+  const quickstartPost = BLOG_POSTS.find((post) => post.slug === INTERACTIVE_TUTORIAL_SLUG);
+  const regularPosts = BLOG_POSTS.filter((post) => post.slug !== INTERACTIVE_TUTORIAL_SLUG);
+
+  return (
+    <div className="space-y-4">
+      <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 sm:p-8 shadow-sm">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full bg-blue-300/15 blur-3xl" />
+        <div className="pointer-events-none absolute -left-16 -bottom-20 h-52 w-52 rounded-full bg-sky-200/20 blur-3xl" />
+        <div className="relative flex justify-center">
+          <BlogTitleSvg />
+        </div>
+      </section>
+
+      {quickstartPost ? (
+        <article className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-6 sm:p-7 shadow-sm ring-1 ring-blue-200/70">
+          <div className="pointer-events-none absolute -right-14 -top-16 h-36 w-36 rounded-full bg-cyan-300/20 blur-2xl" />
+          <div className="pointer-events-none absolute -left-16 -bottom-20 h-36 w-36 rounded-full bg-blue-300/20 blur-2xl" />
+          <div className="relative">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-800">
+                Start Here
+              </span>
+              <span className="rounded-full border border-cyan-300 bg-cyan-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-800">
+                Interactive Demo
+              </span>
+            </div>
+            <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-600">{quickstartPost.date}</p>
+            <h3 className="mt-2 text-2xl font-semibold text-slate-900">{quickstartPost.title}</h3>
+            <p className="mt-2 max-w-3xl text-slate-700">
+              Learn the app basics in a few minutes with a guided, hands-on walkthrough that mirrors the real UI.
+            </p>
+            <button
+              onClick={() => openPost(quickstartPost.slug)}
+              className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Start Quickstart Demo
+            </button>
+          </div>
+        </article>
+      ) : null}
+
+      {regularPosts.map((post) => (
+        <article key={post.title} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          {post.slug === ADVANCED_FEATURES_SLUG ? (
+            <div className="mb-2 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-700">
+              <Cpu size={12} />
+              Advanced Guide
+            </div>
+          ) : null}
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">{post.date}</p>
+          <h3 className="mt-2 text-xl font-semibold text-slate-900">{post.title}</h3>
+          <p className="mt-2 text-slate-700">{post.summary}</p>
+          <button
+            onClick={() => openPost(post.slug)}
+            className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            {post.slug === ADVANCED_FEATURES_SLUG ? 'Read Advanced Guide' : 'Read Post'}
+          </button>
+        </article>
+      ))}
+    </div>
+  );
+};
 
 const TUTORIAL_STEPS: { action: TutorialAction; title: string; description: string; tip: string }[] = [
   {
@@ -383,7 +439,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
   const [progress, setProgress] = useState<Record<TutorialAction, boolean>>({ ...EMPTY_TUTORIAL_PROGRESS });
   const [stepReady, setStepReady] = useState<Record<TutorialAction, boolean>>({ ...EMPTY_TUTORIAL_PROGRESS });
   const [nextStepFlashOn, setNextStepFlashOn] = useState(true);
-  const [moveDrag, setMoveDrag] = useState<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const [moveDrag, setMoveDrag] = useState<{ pointerId: number; axis: 'x' | 'y'; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const [rotateDrag, setRotateDrag] = useState<{ pointerId: number; centerX: number; centerY: number; startAngleDeg: number; startPointerAngleRad: number } | null>(null);
   const desktopPieceRef = useRef<HTMLDivElement | null>(null);
   const mobilePieceRef = useRef<HTMLDivElement | null>(null);
@@ -452,31 +508,32 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
     setTutorialTool(tool);
   };
 
-  const nudgePiece = (dx: number, dy: number) => {
-    if (!hasPiece || !actionEnabled('move') || tutorialTool !== 'move') return;
-    setPieceOffset((prev) => [prev[0] + dx, prev[1] + dy]);
-    markStepReady('move');
-  };
-
-  const beginMoveDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const beginMoveDrag = (axis: 'x' | 'y') => (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!hasPiece || !actionEnabled('move') || tutorialTool !== 'move') return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setMoveDrag({
       pointerId: event.pointerId,
+      axis,
       startX: event.clientX,
       startY: event.clientY,
       originX: pieceOffset[0],
       originY: pieceOffset[1],
     });
-    markStepReady('move');
   };
 
   const updateMoveDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!moveDrag || moveDrag.pointerId !== event.pointerId) return;
     const deltaX = event.clientX - moveDrag.startX;
     const deltaY = event.clientY - moveDrag.startY;
-    setPieceOffset([moveDrag.originX + deltaX, moveDrag.originY + deltaY]);
+    const moved = Math.abs(deltaX) + Math.abs(deltaY) > 0.6;
+    if (moveDrag.axis === 'x') {
+      setPieceOffset([moveDrag.originX + deltaX, moveDrag.originY]);
+      if (moved) markStepReady('move');
+      return;
+    }
+    setPieceOffset([moveDrag.originX, moveDrag.originY + deltaY]);
+    if (moved) markStepReady('move');
   };
 
   const endMoveDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -586,7 +643,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
     if (currentAction === 'add') return 'Step 1: click 2x4 Lumber in Build.';
     if (currentAction === 'move') {
       return tutorialTool === 'move'
-        ? 'Step 2: use the move arrows around the board.'
+        ? 'Step 2: drag a move axis handle (X or Y).'
         : 'Step 2: click Move in the toolbar.';
     }
     if (currentAction === 'resize') {
@@ -645,19 +702,19 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
       </button>
 
       <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">Interactive Tutorial</p>
-        <h1 className="mt-2 text-2xl font-semibold text-slate-900">Build your first layout in 5 minutes</h1>
-        <p className="mt-3 max-w-3xl text-slate-700">
-          Learn the core workflow with a close UI simulation, then jump into the full app.
-        </p>
+        <h1 className="text-2xl font-semibold text-slate-900 text-center">Build your first layout in 5 minutes</h1>
 
         <section className="mt-6 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50 p-4 sm:p-5">
-          <h2 className="text-lg font-semibold text-slate-900">Practice Zone</h2>
-          <p className="mt-1 text-sm text-slate-600">
-            This mirrors the real layout: left sidebar, top toolbar, center viewport, and right BOM.
-          </p>
-          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-            {hintText}
+          <div className="rounded-xl border-2 border-blue-300 bg-white px-4 py-4 text-center shadow-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700">
+              {currentStep ? `Step ${stepIndex + 1} Command` : 'Final Step'}
+            </p>
+            <p className="mt-1 text-xl sm:text-2xl font-extrabold text-slate-900">
+              {currentStep ? currentStep.title : 'Tutorial Complete'}
+            </p>
+            <p className="mt-1 text-sm sm:text-base font-semibold text-blue-800">
+              {hintText}
+            </p>
           </div>
 
           {!isMobileTutorial ? (
@@ -931,43 +988,27 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
 
                           {showMoveGizmo && (
                             <>
+                              <div className="pointer-events-none absolute left-1/2 top-1/2 h-[2px] w-[calc(100%+3rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-300/80" />
+                              <div className="pointer-events-none absolute left-1/2 top-1/2 h-[calc(100%+3rem)] w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-300/80" />
                               <button
-                                onPointerDown={beginMoveDrag}
+                                onPointerDown={beginMoveDrag('x')}
                                 onPointerMove={updateMoveDrag}
                                 onPointerUp={endMoveDrag}
                                 onPointerCancel={endMoveDrag}
-                                className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                                title="Drag to move"
-                              >
-                                <Move size={14} className="mx-auto" />
-                              </button>
-                              <button
-                                onClick={() => nudgePiece(0, -12)}
-                                className={`absolute left-1/2 -translate-x-1/2 -top-8 h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                                title="Move up"
-                              >
-                                <ArrowUp size={14} className="mx-auto" />
-                              </button>
-                              <button
-                                onClick={() => nudgePiece(0, 12)}
-                                className={`absolute left-1/2 -translate-x-1/2 -bottom-8 h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                                title="Move down"
-                              >
-                                <ArrowDown size={14} className="mx-auto" />
-                              </button>
-                              <button
-                                onClick={() => nudgePiece(-12, 0)}
-                                className={`absolute top-1/2 -translate-y-1/2 -left-8 h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                                title="Move left"
-                              >
-                                <ArrowLeft size={14} className="mx-auto" />
-                              </button>
-                              <button
-                                onClick={() => nudgePiece(12, 0)}
-                                className={`absolute top-1/2 -translate-y-1/2 -right-8 h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                                title="Move right"
+                                className={`absolute top-1/2 -translate-y-1/2 -right-10 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                                title="Drag along X axis"
                               >
                                 <ArrowRight size={14} className="mx-auto" />
+                              </button>
+                              <button
+                                onPointerDown={beginMoveDrag('y')}
+                                onPointerMove={updateMoveDrag}
+                                onPointerUp={endMoveDrag}
+                                onPointerCancel={endMoveDrag}
+                                className={`absolute left-1/2 -translate-x-1/2 -top-10 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                                title="Drag along Y axis"
+                              >
+                                <ArrowUp size={14} className="mx-auto" />
                               </button>
                             </>
                           )}
@@ -1098,16 +1139,30 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                           style={{ transform: `rotate(${pieceRotation}deg)` }}
                         />
                         {showMoveGizmo && (
-                          <button
-                            onPointerDown={beginMoveDrag}
-                            onPointerMove={updateMoveDrag}
-                            onPointerUp={endMoveDrag}
-                            onPointerCancel={endMoveDrag}
-                            className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-8 w-8 rounded-md border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
-                            title="Drag to move"
-                          >
-                            <Move size={14} className="mx-auto" />
-                          </button>
+                          <>
+                            <div className="pointer-events-none absolute left-1/2 top-1/2 h-[2px] w-[calc(100%+2rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-300/80" />
+                            <div className="pointer-events-none absolute left-1/2 top-1/2 h-[calc(100%+2rem)] w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-300/80" />
+                            <button
+                              onPointerDown={beginMoveDrag('x')}
+                              onPointerMove={updateMoveDrag}
+                              onPointerUp={endMoveDrag}
+                              onPointerCancel={endMoveDrag}
+                              className={`absolute top-1/2 -translate-y-1/2 -right-9 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                              title="Drag along X axis"
+                            >
+                              <ArrowRight size={14} className="mx-auto" />
+                            </button>
+                            <button
+                              onPointerDown={beginMoveDrag('y')}
+                              onPointerMove={updateMoveDrag}
+                              onPointerUp={endMoveDrag}
+                              onPointerCancel={endMoveDrag}
+                              className={`absolute left-1/2 -translate-x-1/2 -top-9 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                              title="Drag along Y axis"
+                            >
+                              <ArrowUp size={14} className="mx-auto" />
+                            </button>
+                          </>
                         )}
                         {showRotateGizmo && (
                           <button
@@ -1312,9 +1367,225 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
   );
 };
 
+const AdvancedFeaturesBlog = ({ openApp, backToBlog }: { openApp: () => void; backToBlog: () => void }) => (
+  <div className="space-y-4">
+    <button
+      onClick={backToBlog}
+      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+    >
+      Back to Blog
+    </button>
+
+    <article className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm space-y-5">
+      <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-cyan-50 p-4 sm:p-5">
+        <div className="inline-flex items-center gap-2 rounded-full border border-indigo-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-700">
+          <Cpu size={13} />
+          Advanced Features Deep Dive
+        </div>
+        <h1 className="mt-3 text-2xl sm:text-3xl font-semibold text-slate-900">
+          Special Tools + Control Panel, explained visually
+        </h1>
+        <p className="mt-2 text-slate-700 max-w-4xl">
+          This is a practical guide to the advanced toolset: Auto Screw workflows, overlap trimming, snapping helpers, shadows, and the futuristic
+          control panel with explosion + structural stress analysis.
+        </p>
+        <button
+          onClick={() => {
+            const appUrl = `${window.location.origin}${window.location.pathname}#/app`;
+            window.open(appUrl, '_blank', 'noopener,noreferrer');
+          }}
+          className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Open Build While Reading
+        </button>
+      </div>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">1. Where these features live in the real UI</h2>
+        <p className="text-sm text-slate-700">
+          Advanced controls are concentrated on the toolbar: <strong>Control Panel</strong> and <strong>Special Tools</strong>, with Export and
+          Import grouped beside them.
+        </p>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white p-2.5">
+            <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+              <MousePointer2 size={13} /> Select
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+              <Move size={13} /> Move
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+              <RotateCw size={13} /> Rotate
+            </div>
+            <div className="h-5 w-px bg-slate-200" />
+            <div className="inline-flex items-center gap-1 rounded-md border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs text-cyan-800">
+              <Cpu size={13} /> Control Panel
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-800">
+              <Wrench size={13} /> Special Tools
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+              <Download size={13} /> Export
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700">
+              <Upload size={13} /> Import
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">2. Special Tools menu map</h2>
+        <p className="text-sm text-slate-700">
+          The dropdown is grouped into <strong>Building</strong>, <strong>Handling</strong>, and <strong>Settings</strong>. Here is the exact flow
+          and what each control is best for.
+        </p>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,320px),1fr]">
+          <div className="rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 px-2 py-1">Building</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Hammer size={14} /> Auto Screw</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Scissors size={14} /> Trim Overlaps</div>
+            <div className="my-1 h-px bg-slate-200" />
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 px-2 py-1">Handling</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><MousePointer2 size={14} /> Select Assist</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Magnet size={14} /> Snapping</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Magnet size={14} /> Edge Snap</div>
+            <div className="my-1 h-px bg-slate-200" />
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 px-2 py-1">Settings</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Grid size={14} /> Floor On/Off</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-slate-700 inline-flex items-center gap-2"><Sun size={14} /> Shadows On/Off</div>
+            <div className="rounded-md px-2 py-1.5 text-sm text-red-600 inline-flex items-center gap-2"><Trash2 size={14} /> Reset Scene</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 space-y-2">
+            <div><strong>Auto Screw:</strong> select entry piece first, destination piece second. It places screws intended to bridge both parts.</div>
+            <div><strong>Trim Overlaps:</strong> select one wood/sheet part, then cut away regions where it overlaps other wood parts.</div>
+            <div><strong>Select Assist:</strong> in Select mode, hovered parts flash green to reduce selection mistakes.</div>
+            <div><strong>Edge Snap:</strong> aligns nearby edges, including floor-level alignment, for faster placement.</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">3. Auto Screw: recommended workflow</h2>
+        <p className="text-sm text-slate-700">
+          Auto Screw is directional. Piece 1 is the entry side (screw head side), piece 2 is the destination side.
+        </p>
+        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 sm:p-4 space-y-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium text-slate-500 text-center">Auto Screw demo</div>
+            <div className="mt-2 mx-auto w-full max-w-[18rem] sm:max-w-[20rem] overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+              <video
+                className="h-auto w-full object-cover"
+                src="/auto-screw.mp4"
+                autoPlay
+                loop
+                muted
+                playsInline
+                controls
+                preload="metadata"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-lg border border-blue-200 bg-white p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Step 1</div>
+              <div className="mt-1 text-sm text-slate-700">Enable <strong>Auto Screw</strong> in Special Tools.</div>
+            </div>
+            <div className="rounded-lg border border-blue-200 bg-white p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Step 2</div>
+              <div className="mt-1 text-sm text-slate-700">Click entry piece, then click destination piece.</div>
+            </div>
+            <div className="rounded-lg border border-blue-200 bg-white p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Result</div>
+              <div className="mt-1 text-sm text-slate-700">Two screws are attempted; failed placements should place nothing.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">4. Futuristic Control Panel map</h2>
+        <p className="text-sm text-slate-700">
+          Use this panel for exploded inspection, heat-map overlay, stress scenarios, and build telemetry. On small screens, minimize keeps it out of
+          the way while preserving quick access.
+        </p>
+        <div className="rounded-xl border border-cyan-300/40 bg-slate-950/85 p-3 sm:p-4 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.18)]">
+          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-cyan-300">
+            <span>Future Build Console</span>
+            <span className="font-mono">68%</span>
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            <div className="rounded-lg border border-cyan-300/30 bg-slate-900/70 p-2">
+              <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
+                <Maximize2 size={12} />
+                Explosion
+              </div>
+              <div className="mt-2 h-2 rounded bg-slate-800">
+                <div className="h-2 w-2/5 rounded bg-cyan-400" />
+              </div>
+              <div className="mt-1 text-[10px] text-cyan-100/80">0.00 normal to 1.00 full explode</div>
+            </div>
+            <div className="rounded-lg border border-cyan-300/30 bg-slate-900/70 p-2">
+              <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
+                <Shield size={12} />
+                Structural Stress Lab
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1 text-[10px]">
+                <span className="rounded border border-cyan-300/50 bg-cyan-500/15 px-1.5 py-0.5">Baseline</span>
+                <span className="rounded border border-slate-600 px-1.5 py-0.5">Vertical Load</span>
+                <span className="rounded border border-slate-600 px-1.5 py-0.5">Side Racking</span>
+                <span className="rounded border border-slate-600 px-1.5 py-0.5">Twist Torque</span>
+              </div>
+              <div className="mt-2 h-1.5 rounded bg-slate-800 overflow-hidden">
+                <div className="h-full w-2/3 bg-gradient-to-r from-rose-500 via-amber-400 to-cyan-400" />
+              </div>
+              <div className="mt-1 text-[10px] text-cyan-100/80">Heat map: red high risk, amber moderate, cyan reinforced</div>
+            </div>
+          </div>
+          <div className="mt-2 rounded-lg border border-cyan-300/30 bg-slate-900/70 p-2">
+            <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-cyan-300">
+              <ActivitySquare size={12} />
+              Build Telemetry
+            </div>
+            <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px]">
+              <div className="rounded border border-slate-700 bg-slate-900/80 p-1.5">Wood Pieces: 18</div>
+              <div className="rounded border border-slate-700 bg-slate-900/80 p-1.5">Fasteners: 26</div>
+              <div className="rounded border border-slate-700 bg-slate-900/80 p-1.5">Support: 71%</div>
+              <div className="rounded border border-slate-700 bg-slate-900/80 p-1.5">Max Span: 38.2 in</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <h2 className="text-lg font-semibold text-slate-900">Quick recipes to try next</h2>
+        <div className="mt-2 space-y-1.5 text-sm text-slate-700">
+          <p><strong>Fast shelf jointing:</strong> turn on Edge Snap, align parts, then use Auto Screw to lock joints quickly.</p>
+          <p><strong>Custom notch workflow:</strong> duplicate a guide part, overlap it where needed, then run Trim Overlaps.</p>
+          <p><strong>Stability tuning:</strong> run baseline stress lab, add braces/fasteners where red clusters appear, and re-check score.</p>
+        </div>
+      </section>
+
+      <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-center">
+        <p className="text-sm text-slate-700">You now have the full advanced map. Apply it directly in your real build.</p>
+        <button
+          onClick={openApp}
+          className="mt-3 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Start Building with Advanced Tools
+        </button>
+      </div>
+    </article>
+  </div>
+);
+
 const BlogPostPage = ({ post, backToBlog, openApp }: { post: BlogPost; backToBlog: () => void; openApp: () => void }) => {
   if (post.slug === INTERACTIVE_TUTORIAL_SLUG) {
     return <InteractiveTutorialBlog openApp={openApp} backToBlog={backToBlog} />;
+  }
+  if (post.slug === ADVANCED_FEATURES_SLUG) {
+    return <AdvancedFeaturesBlog openApp={openApp} backToBlog={backToBlog} />;
   }
 
   return (

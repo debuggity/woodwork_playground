@@ -602,6 +602,8 @@ export const Toolbar: React.FC = () => {
     toggleSnap,
     edgeSnapEnabled,
     toggleEdgeSnap,
+    selectAssistEnabled,
+    toggleSelectAssist,
     parts,
     pastParts,
     futureParts,
@@ -1340,6 +1342,19 @@ export const Toolbar: React.FC = () => {
               <div className="px-2.5 pt-0.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                 Handling
               </div>
+              <button
+                onClick={toggleSelectAssist}
+                className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                role="menuitem"
+                title="In Select mode, hovering a wood piece flashes it green."
+              >
+                <span className="flex items-center gap-2">
+                  <MousePointer2 size={16} />
+                  Select Assist {selectAssistEnabled ? 'On' : 'Off'}
+                </span>
+                {selectAssistEnabled && <Check size={14} className="text-blue-600" />}
+              </button>
+
               <button
                 onClick={toggleSnap}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"

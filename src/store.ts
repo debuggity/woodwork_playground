@@ -161,7 +161,11 @@ const AUTO_SCREW_OVERLAP_MIN = 0.08;
 const AUTO_SCREW_MIN_PENETRATION = 0.12;
 const AUTO_SCREW_REQUIRED_COUNT = 2;
 const AUTO_SCREW_MIN_DIR_ALIGNMENT = 0.02;
-const AUTO_SCREW_MAX_AXIS_OVERLAP = 999;
+// Keep screw axis close to the actual "through-joint" direction.
+// Large overlap along the screw axis usually means the screw is running
+// parallel to the contact plane, which is not a valid join.
+const AUTO_SCREW_MAX_AXIS_OVERLAP = 0.75;
+const AUTO_SCREW_MAX_AXIS_OVERLAP_RATIO = 0.6;
 const AUTO_SCREW_PROFILE_EPS = 0.01;
 const AUTO_SCREW_HEAD_PROTRUSION = 0.06;
 const AUTO_SCREW_PRESETS: ScrewPreset[] = [
@@ -623,6 +627,8 @@ interface AppState {
   toggleSnap: () => void;
   edgeSnapEnabled: boolean;
   toggleEdgeSnap: () => void;
+  selectAssistEnabled: boolean;
+  toggleSelectAssist: () => void;
   undo: () => void;
   redo: () => void;
   floorEnabled: boolean;
@@ -650,6 +656,7 @@ export const useStore = create<AppState>((set) => ({
   cameraFocusRequest: 0,
   snapEnabled: true, // Default to true for easier alignment
   edgeSnapEnabled: true,
+  selectAssistEnabled: false,
   floorEnabled: false,
   shadowsEnabled: false,
   structuralOverlayEnabled: false,
@@ -893,10 +900,17 @@ export const useStore = create<AppState>((set) => ({
           alongSecond.min,
           alongSecond.max
         );
+        const firstSpan = alongFirst.max - alongFirst.min;
+        const secondSpan = alongSecond.max - alongSecond.min;
+        const thinnerSpan = Math.min(firstSpan, secondSpan);
+        const allowedAxisOverlap = Math.min(
+          AUTO_SCREW_MAX_AXIS_OVERLAP,
+          Math.max(0.2, thinnerSpan * AUTO_SCREW_MAX_AXIS_OVERLAP_RATIO)
+        );
         if (alongGap > AUTO_SCREW_CONTACT_GAP_TOLERANCE) {
           continue;
         }
-        if (alongOverlap > AUTO_SCREW_MAX_AXIS_OVERLAP) {
+        if (alongOverlap > allowedAxisOverlap) {
           continue;
         }
         foundTouchingDirection = true;
@@ -1201,6 +1215,14 @@ export const useStore = create<AppState>((set) => ({
   toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
 
   toggleEdgeSnap: () => set((state) => ({ edgeSnapEnabled: !state.edgeSnapEnabled })),
+
+  toggleSelectAssist: () => set((state) => {
+    const nextValue = !state.selectAssistEnabled;
+    return {
+      selectAssistEnabled: nextValue,
+      hoveredId: nextValue ? state.hoveredId : null,
+    };
+  }),
 
   undo: () => set((state) => {
     if (state.pastParts.length === 0) return {};
