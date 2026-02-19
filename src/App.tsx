@@ -245,14 +245,10 @@ const HomePage = ({ openApp }: { openApp: () => void }) => (
       </div>
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 aspect-[4/3] sm:aspect-square">
-          <video
+          <img
             className="h-full w-full object-cover"
-            src="/import-export.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="metadata"
+            src="/import-export.png"
+            alt="Import and export project preview"
           />
         </div>
         <h3 className="text-base font-semibold text-slate-900">Your Designs Stay Yours</h3>
@@ -666,6 +662,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
   const rotateHandleAngleRad = ((pieceRotation - 90) * Math.PI) / 180;
   const rotateHandleX = Math.cos(rotateHandleAngleRad) * rotateHandleDistance;
   const rotateHandleY = Math.sin(rotateHandleAngleRad) * rotateHandleDistance;
+  const isTutorialDragging = !!moveDrag || !!rotateDrag;
   const canGoBack = stepIndex > 0;
   const stepSatisfied = currentStep ? (progress[currentStep.action] || stepReady[currentStep.action]) : false;
   const canGoForward = !!currentStep && (stepIndex < maxUnlockedStep || stepSatisfied);
@@ -701,7 +698,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
         Back to Blog
       </button>
 
-      <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <article className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm">
         <h1 className="text-2xl font-semibold text-slate-900 text-center">Build your first layout in 5 minutes</h1>
 
         <section className="mt-6 rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50 p-4 sm:p-5">
@@ -883,8 +880,8 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
               </div>
 
               <div className="absolute inset-y-0 left-[15rem] right-[15rem]">
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-1.5 sm:p-2 flex flex-col gap-1 z-20 max-w-[calc(100%-0.5rem)] overflow-visible">
-                  <div className="flex flex-wrap items-center justify-center gap-0.5 sm:gap-2">
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-lg shadow-lg p-1.5 sm:p-2 flex flex-col gap-1 z-30 max-w-[calc(100%-0.5rem)] overflow-visible">
+                  <div className="flex flex-nowrap items-center justify-center gap-0.5 sm:gap-2">
                     <button
                       onClick={() => activateTool('select')}
                       disabled
@@ -944,7 +941,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                   </div>
                 </div>
 
-                <div className="h-full px-4 pt-[6.25rem] pb-4">
+                <div className="h-full px-4 pt-[6.75rem] pb-4">
                   <div
                     className="relative h-full overflow-hidden rounded-lg border border-slate-200"
                     style={{
@@ -995,7 +992,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                                 onPointerMove={updateMoveDrag}
                                 onPointerUp={endMoveDrag}
                                 onPointerCancel={endMoveDrag}
-                                className={`absolute top-1/2 -translate-y-1/2 -right-10 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                                className={`absolute top-1/2 -translate-y-1/2 -right-10 h-8 w-8 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
                                 title="Drag along X axis"
                               >
                                 <ArrowRight size={14} className="mx-auto" />
@@ -1005,7 +1002,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                                 onPointerMove={updateMoveDrag}
                                 onPointerUp={endMoveDrag}
                                 onPointerCancel={endMoveDrag}
-                                className={`absolute left-1/2 -translate-x-1/2 -top-10 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                                className={`absolute left-1/2 -translate-x-1/2 -top-10 h-8 w-8 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
                                 title="Drag along Y axis"
                               >
                                 <ArrowUp size={14} className="mx-auto" />
@@ -1021,7 +1018,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                                 onPointerMove={updateRotateDrag}
                                 onPointerUp={endRotateDrag}
                                 onPointerCancel={endRotateDrag}
-                                className={`absolute h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightRotateHandle ? guideGlowClass : ''}`}
+                                className={`absolute h-7 w-7 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightRotateHandle ? guideGlowClass : ''}`}
                                 style={{
                                   left: '50%',
                                   top: '50%',
@@ -1047,61 +1044,71 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
           </div>
           ) : (
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-100 overflow-hidden">
-            <div className="relative h-[33rem]">
-              <div className="absolute top-3 left-3 z-30 flex gap-2">
+            <div className="relative h-[clamp(21.5rem,56dvh,27rem)]">
+              <div className="absolute top-3 left-2 z-20 flex gap-1.5 sm:gap-2">
                 <button
                   onClick={() => {
                     setMobileRightPanelOpen(false);
                     setMobileLeftPanelOpen(true);
                   }}
-                  className={`h-9 w-9 rounded-md border bg-white/95 text-slate-700 shadow hover:bg-white ${highlightMobileLeftOpen ? guideGlowClass : ''}`}
+                  className={`h-8 w-8 sm:h-9 sm:w-9 rounded-md border bg-white/95 text-slate-700 shadow hover:bg-white ${highlightMobileLeftOpen ? guideGlowClass : ''}`}
                   title="Open Build/Edit Panel"
                 >
-                  <PanelLeft size={16} className="mx-auto" />
+                  <PanelLeft size={14} className="mx-auto" />
                 </button>
                 <button
                   onClick={() => {
                     setMobileLeftPanelOpen(false);
                     setMobileRightPanelOpen(true);
                   }}
-                  className="h-9 w-9 rounded-md border bg-white/95 text-slate-700 shadow hover:bg-white"
+                  className="h-8 w-8 sm:h-9 sm:w-9 rounded-md border bg-white/95 text-slate-700 shadow hover:bg-white"
                   title="Open Bill of Materials"
                 >
-                  <PanelRight size={16} className="mx-auto" />
+                  <PanelRight size={14} className="mx-auto" />
                 </button>
               </div>
 
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 rounded-lg bg-white/95 backdrop-blur shadow-lg p-1.5 flex items-center gap-1">
-                <button disabled className={toolbarButtonClass(false, tutorialTool === 'select')} title="Select">
-                  <MousePointer2 size={18} />
-                </button>
-                <button
-                  onClick={() => activateTool('move')}
-                  disabled={!actionEnabled('move')}
-                  className={`${toolbarButtonClass(actionEnabled('move'), tutorialTool === 'move')} ${highlightMoveTool ? guideGlowClass : ''}`}
-                  title="Move"
-                >
-                  <Move size={18} />
-                </button>
-                <button
-                  onClick={() => activateTool('rotate')}
-                  disabled={!actionEnabled('rotate')}
-                  className={`${toolbarButtonClass(actionEnabled('rotate'), tutorialTool === 'rotate')} ${highlightRotateTool ? guideGlowClass : ''}`}
-                  title="Rotate"
-                >
-                  <RotateCw size={18} />
-                </button>
-                <button
-                  onClick={centerCamera}
-                  disabled={!actionEnabled('center')}
-                  className={`${toolbarButtonClass(actionEnabled('center'))} ${highlightCenterButton ? guideGlowClass : ''}`}
-                  title="Auto Center Camera"
-                >
-                  <LocateFixed size={18} />
-                </button>
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 rounded-lg bg-white/95 backdrop-blur shadow-lg p-1.5 flex flex-col gap-1 max-w-[calc(100%-5.2rem)] sm:max-w-[calc(100%-0.75rem)]">
+                <div className="flex items-center justify-center gap-1">
+                  <button disabled className={toolbarButtonClass(false, tutorialTool === 'select')} title="Select">
+                    <MousePointer2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => activateTool('move')}
+                    disabled={!actionEnabled('move')}
+                    className={`${toolbarButtonClass(actionEnabled('move'), tutorialTool === 'move')} ${highlightMoveTool ? guideGlowClass : ''}`}
+                    title="Move"
+                  >
+                    <Move size={18} />
+                  </button>
+                  <button
+                    onClick={() => activateTool('rotate')}
+                    disabled={!actionEnabled('rotate')}
+                    className={`${toolbarButtonClass(actionEnabled('rotate'), tutorialTool === 'rotate')} ${highlightRotateTool ? guideGlowClass : ''}`}
+                    title="Rotate"
+                  >
+                    <RotateCw size={18} />
+                  </button>
+                  <button
+                    onClick={centerCamera}
+                    disabled={!actionEnabled('center')}
+                    className={`${toolbarButtonClass(actionEnabled('center'))} ${highlightCenterButton ? guideGlowClass : ''}`}
+                    title="Auto Center Camera"
+                  >
+                    <LocateFixed size={18} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-center gap-1">
+                  <button disabled className={toolbarButtonClass(false)} title="Save Design">
+                    <Download size={18} />
+                  </button>
+                  <button disabled className={toolbarButtonClass(false)} title="Load Design">
+                    <Upload size={18} />
+                  </button>
+                </div>
               </div>
 
-              <div className="h-full px-3 pt-[4.35rem] pb-3">
+              <div className="h-full px-3 pt-[6.8rem] pb-3">
                 <div
                   className="relative h-full overflow-hidden rounded-lg border border-slate-200"
                   style={{
@@ -1109,6 +1116,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                     backgroundImage:
                       'linear-gradient(to right, rgba(148,163,184,0.2) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.2) 1px, transparent 1px)',
                     backgroundSize: '22px 22px',
+                    touchAction: isTutorialDragging ? 'none' : 'pan-y',
                   }}
                 >
                   <div className="absolute left-3 top-3 rounded-md border border-slate-200 bg-white/90 px-2 py-1 text-[10px] text-slate-600 inline-flex items-center gap-1.5">
@@ -1147,7 +1155,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                               onPointerMove={updateMoveDrag}
                               onPointerUp={endMoveDrag}
                               onPointerCancel={endMoveDrag}
-                              className={`absolute top-1/2 -translate-y-1/2 -right-9 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                              className={`absolute top-1/2 -translate-y-1/2 -right-9 h-8 w-8 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
                               title="Drag along X axis"
                             >
                               <ArrowRight size={14} className="mx-auto" />
@@ -1157,7 +1165,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                               onPointerMove={updateMoveDrag}
                               onPointerUp={endMoveDrag}
                               onPointerCancel={endMoveDrag}
-                              className={`absolute left-1/2 -translate-x-1/2 -top-9 h-8 w-8 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
+                              className={`absolute left-1/2 -translate-x-1/2 -top-9 h-8 w-8 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightMoveControls ? guideGlowClass : ''}`}
                               title="Drag along Y axis"
                             >
                               <ArrowUp size={14} className="mx-auto" />
@@ -1170,7 +1178,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
                             onPointerMove={updateRotateDrag}
                             onPointerUp={endRotateDrag}
                             onPointerCancel={endRotateDrag}
-                            className={`absolute h-7 w-7 rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightRotateHandle ? guideGlowClass : ''}`}
+                            className={`absolute h-7 w-7 touch-none rounded-full border border-blue-300 bg-white text-blue-700 shadow cursor-grab active:cursor-grabbing hover:bg-blue-50 ${highlightRotateHandle ? guideGlowClass : ''}`}
                             style={{
                               left: '50%',
                               top: '50%',
@@ -1194,7 +1202,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
               {mobileLeftPanelOpen && (
                 <div className="absolute inset-0 z-40">
                   <div className="absolute inset-0 bg-slate-900/35" onClick={() => setMobileLeftPanelOpen(false)} />
-                  <div className="absolute inset-y-0 left-0 w-[min(21rem,84vw)] bg-white border-r border-slate-200 shadow-xl flex flex-col">
+                  <div className="absolute inset-y-0 left-0 w-[min(18rem,78vw)] bg-white border-r border-slate-200 shadow-xl flex flex-col">
                     <button onClick={() => setMobileLeftPanelOpen(false)} className="absolute right-2 top-2 p-1.5 rounded-md hover:bg-slate-100 text-slate-500">
                       <X size={16} />
                     </button>
@@ -1275,7 +1283,7 @@ const InteractiveTutorialBlog = ({ openApp, backToBlog }: { openApp: () => void;
               {mobileRightPanelOpen && (
                 <div className="absolute inset-0 z-40">
                   <div className="absolute inset-0 bg-slate-900/35" onClick={() => setMobileRightPanelOpen(false)} />
-                  <div className="absolute inset-y-0 right-0 w-[min(21rem,84vw)] bg-white border-l border-slate-200 shadow-xl p-4">
+                  <div className="absolute inset-y-0 right-0 w-[min(18rem,78vw)] bg-white border-l border-slate-200 shadow-xl p-3">
                     <button onClick={() => setMobileRightPanelOpen(false)} className="absolute right-2 top-2 p-1.5 rounded-md hover:bg-slate-100 text-slate-500">
                       <X size={16} />
                     </button>
