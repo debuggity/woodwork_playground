@@ -966,31 +966,33 @@ export const Toolbar: React.FC = () => {
           <Copy size={18} />
         </button>
 
-        <button
-          onClick={undo}
-          disabled={!canUndo}
-          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
-            canUndo
-              ? 'text-slate-600 hover:bg-slate-100'
-              : 'text-slate-300 cursor-not-allowed'
-          }`}
-          title="Undo"
-        >
-          <Undo2 size={18} />
-        </button>
+        <div className="inline-flex items-center gap-0.5 sm:gap-0.5 shrink-0 whitespace-nowrap">
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            className={`p-1.5 sm:p-2 rounded-md transition-colors ${
+              canUndo
+                ? 'text-slate-600 hover:bg-slate-100'
+                : 'text-slate-300 cursor-not-allowed'
+            }`}
+            title="Undo"
+          >
+            <Undo2 size={18} />
+          </button>
 
-        <button
-          onClick={redo}
-          disabled={!canRedo}
-          className={`p-1.5 sm:p-2 rounded-md transition-colors ${
-            canRedo
-              ? 'text-slate-600 hover:bg-slate-100'
-              : 'text-slate-300 cursor-not-allowed'
-          }`}
-          title="Redo"
-        >
-          <Redo2 size={18} />
-        </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            className={`p-1.5 sm:p-2 rounded-md transition-colors ${
+              canRedo
+                ? 'text-slate-600 hover:bg-slate-100'
+                : 'text-slate-300 cursor-not-allowed'
+            }`}
+            title="Redo"
+          >
+            <Redo2 size={18} />
+          </button>
+        </div>
 
         <button
           onClick={requestCameraFocus}
@@ -1027,13 +1029,13 @@ export const Toolbar: React.FC = () => {
           >
             <Cpu size={14} />
             <span className="hidden sm:inline text-xs font-medium">Control Panel</span>
-            <span className="hidden sm:inline-flex">
+            <span className="inline-flex">
               {isControlPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </span>
           </button>
 
           {isControlPanelOpen && (
-            <div className={`fixed right-2 sm:right-3 top-[6.65rem] sm:top-[5.1rem] z-30 w-[min(19.5rem,calc(100vw-0.75rem))] overflow-y-auto rounded-xl border border-cyan-300/40 bg-slate-950/78 shadow-[0_0_34px_rgba(34,211,238,0.2)] backdrop-blur-md p-2 sm:p-2.5 [scrollbar-width:thin] [scrollbar-color:#22d3ee66_#0f172a] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-900/70 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-cyan-300/85 [&::-webkit-scrollbar-thumb]:to-blue-500/80 [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-cyan-100/40 ${
+            <div className={`fixed right-1 sm:right-3 top-[6.65rem] sm:top-[5.1rem] z-30 w-[min(17rem,calc(100vw-0.5rem))] sm:w-[min(19.5rem,calc(100vw-0.75rem))] overflow-y-auto rounded-xl border border-cyan-300/40 bg-slate-950/78 shadow-[0_0_34px_rgba(34,211,238,0.2)] backdrop-blur-md p-2 sm:p-2.5 [scrollbar-width:thin] [scrollbar-color:#22d3ee66_#0f172a] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-900/70 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-cyan-300/85 [&::-webkit-scrollbar-thumb]:to-blue-500/80 [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-cyan-100/40 ${
               isControlPanelMinimized ? 'max-h-[10vh] sm:max-h-[11vh]' : 'max-h-[34vh] sm:max-h-[38vh]'
             }`}>
               <div className="relative">

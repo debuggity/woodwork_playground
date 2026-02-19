@@ -47,15 +47,19 @@ export function Workbench() {
       {leftPanelOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-slate-900/40" onClick={() => setLeftPanelOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-[min(22rem,88vw)] bg-white shadow-2xl border-r border-slate-200">
-            <button
-              onClick={() => setLeftPanelOpen(false)}
-              className="absolute right-2 top-2 p-2 rounded-md hover:bg-slate-100 text-slate-500 z-10"
-              title="Close panel"
-            >
-              <X size={18} />
-            </button>
-            <Sidebar />
+          <div className="absolute inset-y-0 left-0 w-[min(22rem,88vw)] bg-white shadow-2xl border-r border-slate-200 flex flex-col">
+            <div className="h-11 shrink-0 border-b border-slate-200 bg-white/95 px-2 flex items-center justify-end">
+              <button
+                onClick={() => setLeftPanelOpen(false)}
+                className="p-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-slate-500"
+                title="Close panel"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <Sidebar />
+            </div>
           </div>
         </div>
       )}
@@ -63,15 +67,19 @@ export function Workbench() {
       {rightPanelOpen && (
         <div className="fixed inset-0 z-40 xl:hidden">
           <div className="absolute inset-0 bg-slate-900/40" onClick={() => setRightPanelOpen(false)} />
-          <div className="absolute inset-y-0 right-0 w-[min(22rem,88vw)] bg-white shadow-2xl border-l border-slate-200">
-            <button
-              onClick={() => setRightPanelOpen(false)}
-              className="absolute right-2 top-2 p-2 rounded-md hover:bg-slate-100 text-slate-500 z-10"
-              title="Close panel"
-            >
-              <X size={18} />
-            </button>
-            <BOM />
+          <div className="absolute inset-y-0 right-0 w-[min(22rem,88vw)] bg-white shadow-2xl border-l border-slate-200 flex flex-col">
+            <div className="h-11 shrink-0 border-b border-slate-200 bg-white/95 px-2 flex items-center justify-end">
+              <button
+                onClick={() => setRightPanelOpen(false)}
+                className="p-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-slate-500"
+                title="Close panel"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <BOM />
+            </div>
           </div>
         </div>
       )}
