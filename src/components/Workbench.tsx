@@ -1,13 +1,83 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PanelLeft, PanelRight, X } from 'lucide-react';
 import { Scene } from './Scene';
 import { Sidebar } from './Sidebar';
 import { Toolbar } from './Toolbar';
 import { BOM } from './BOM';
+import { useStore } from '../store';
+
+const PENDING_PROJECT_IMPORT_KEY = 'woodworker_pending_project_import_asset';
+const PENDING_PROJECT_IMPORT_PAYLOAD_KEY = 'woodworker_pending_project_import_payload';
 
 export function Workbench() {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const setParts = useStore((state) => state.setParts);
+  const requestCameraFocus = useStore((state) => state.requestCameraFocus);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const queuedPayload = window.localStorage.getItem(PENDING_PROJECT_IMPORT_PAYLOAD_KEY);
+    const queuedAsset = window.localStorage.getItem(PENDING_PROJECT_IMPORT_KEY);
+    if (!queuedAsset && !queuedPayload) return;
+
+    window.localStorage.removeItem(PENDING_PROJECT_IMPORT_PAYLOAD_KEY);
+    window.localStorage.removeItem(PENDING_PROJECT_IMPORT_KEY);
+    const normalizedAsset = queuedAsset ? queuedAsset.replace(/^\/+/, '') : '';
+    const baseUrl = window.location.href.split('#')[0];
+    const assetCandidates = normalizedAsset
+      ? [
+          new URL(normalizedAsset, baseUrl).toString(),
+          new URL(`/${normalizedAsset}`, window.location.origin).toString(),
+        ]
+      : [];
+    let isCancelled = false;
+
+    const loadQueuedProject = async () => {
+      try {
+        let parsed: unknown = null;
+        let loaded = false;
+
+        if (queuedPayload) {
+          parsed = JSON.parse(queuedPayload);
+          loaded = true;
+        }
+
+        if (!loaded) {
+          for (const candidate of assetCandidates) {
+            const response = await fetch(candidate, { cache: 'no-store' });
+            if (!response.ok) continue;
+            parsed = await response.json();
+            loaded = true;
+            break;
+          }
+        }
+
+        if (!loaded) {
+          throw new Error('Failed to fetch import asset from all candidate paths');
+        }
+
+        const importedParts = Array.isArray(parsed) ? parsed : parsed?.parts;
+
+        if (!Array.isArray(importedParts)) {
+          throw new Error('Invalid file format: expected parts array');
+        }
+
+        if (isCancelled) return;
+        setParts(importedParts);
+        window.requestAnimationFrame(() => requestCameraFocus());
+      } catch (error) {
+        console.error('Failed to load queued project import', error);
+        alert('Could not auto-load the queued project file.');
+      }
+    };
+
+    void loadQueuedProject();
+    return () => {
+      isCancelled = true;
+    };
+  }, [requestCameraFocus, setParts]);
 
   return (
     <div className="h-dvh w-screen bg-slate-100 overflow-hidden overscroll-none">

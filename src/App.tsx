@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Workbench } from './components/Workbench';
+import standingDeskTopperProject from './data/standingDeskTopper.json';
 import {
   ActivitySquare,
   ArrowRight,
@@ -52,6 +53,10 @@ type TutorialTool = 'select' | 'move' | 'rotate';
 const COOKIE_CONSENT_KEY = 'woodworker_cookie_consent';
 const INTERACTIVE_TUTORIAL_SLUG = 'interactive-quickstart-build-your-first-layout';
 const ADVANCED_FEATURES_SLUG = 'advanced-features-special-tools-and-control-panel';
+const STANDING_DESK_TOPPER_SLUG = 'why-i-built-woodworker-and-fixed-my-neck-pain';
+const PENDING_PROJECT_IMPORT_KEY = 'woodworker_pending_project_import_asset';
+const PENDING_PROJECT_IMPORT_PAYLOAD_KEY = 'woodworker_pending_project_import_payload';
+const STANDING_DESK_TOPPER_IMPORT_ASSET = '/blogs/standing-desk-topper/standing-desk-topper.json';
 
 const ROUTE_LABELS: Record<RouteId, string> = {
   home: 'Home',
@@ -84,6 +89,16 @@ const BLOG_POSTS: BlogPost[] = [
     body: [
       'This guide focuses on every major feature not covered in the basics quickstart.',
       'It includes visual UI maps that mirror the real app so you can immediately apply each workflow in Build mode.',
+    ],
+  },
+  {
+    slug: STANDING_DESK_TOPPER_SLUG,
+    title: 'Why I made WoodWorker: my $0 standing desk topper story',
+    date: 'February 2026',
+    summary: 'How neck pain pushed me to build software, plan my first woodworking project, and build a standing desk topper from scrap.',
+    body: [
+      'I needed a standing desk setup fast, but everything online was expensive.',
+      'So I used WoodWorker to plan a full topper build before making a single cut.',
     ],
   },
   {
@@ -2064,12 +2079,278 @@ const AdvancedFeaturesBlog = ({ openApp, backToBlog }: { openApp: () => void; ba
   </div>
 );
 
+const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => void; backToBlog: () => void }) => {
+  const steps: Array<{
+    id: number;
+    title: string;
+    description: string;
+    how: string[];
+    media: string;
+    mediaType: 'image' | 'video';
+    alt: string;
+  }> = [
+    {
+      id: 1,
+      title: 'Add plywood for the monitor platform',
+      description: 'Measured my monitor stand at 22 in wide and 10 in deep, then set a plywood part to match.',
+      how: [
+        'Open Build panel, add a plywood/sheet part first.',
+        'In Edit, set dimensions to 22 in by 10 in for the monitor platform.',
+      ],
+      media: '/blogs/standing-desk-topper/1-add-plywood-shape-for-screen.png',
+      mediaType: 'image',
+      alt: 'Step 1 plywood monitor platform setup in WoodWorker',
+    },
+    {
+      id: 2,
+      title: 'Add legs to match standing eye level',
+      description: 'Measured standing eye level from desk height, then used edge snap to place legs quickly.',
+      how: [
+        'Add lumber legs in Build, then switch to Move for placement.',
+        'With Edge Snap on (default), drag each leg into aligned position under the platform.',
+      ],
+      media: '/blogs/standing-desk-topper/2-add-legs-for-screen-height.png',
+      mediaType: 'image',
+      alt: 'Step 2 adding legs for screen height in WoodWorker',
+    },
+    {
+      id: 3,
+      title: 'Add the keyboard and mouse shelf',
+      description: 'Placed a second plywood level where my hands felt comfortable while standing.',
+      how: [
+        'Add another sheet piece for keyboard/mouse height.',
+        'Use Move + Edit dimensions to dial in both elevation and working area.',
+      ],
+      media: '/blogs/standing-desk-topper/3-add-plywood-for-mouse-keyboard.png',
+      mediaType: 'image',
+      alt: 'Step 3 adding plywood shelf for keyboard and mouse',
+    },
+    {
+      id: 4,
+      title: 'Trim overlapping sheet regions',
+      description: 'Ran Trim Overlaps from Special Tools to remove extra sheet area where legs intersected.',
+      how: [
+        'Select the sheet to cut, then open Special Tools > Trim Overlaps.',
+        'The tool removes overlap zones against other wood parts to form a clean custom shape.',
+      ],
+      media: '/blogs/standing-desk-topper/4-trim-overlap-of-sheet-to-fit-legs.png',
+      mediaType: 'image',
+      alt: 'Step 4 using trim overlaps on plywood',
+    },
+    {
+      id: 5,
+      title: 'Add cleats under the plywood',
+      description: 'Placed cleats below the shelf so the plywood had reliable support points.',
+      how: [
+        'Add short lumber cleats under each supported edge/region.',
+        'Use Edge Snap and Move to seat cleats tightly under the shelf.',
+      ],
+      media: '/blogs/standing-desk-topper/5-add-cleats-for-sheet.mp4',
+      mediaType: 'video',
+      alt: 'Step 5 adding cleats for plywood support',
+    },
+    {
+      id: 6,
+      title: 'Use Auto Screw for fast join planning',
+      description: 'Selected entry piece first, destination piece second, and planned all fastener locations in seconds.',
+      how: [
+        'Enable Special Tools > Auto Screw.',
+        'Click piece 1 (drill-through side), then piece 2 (finish side) for each connection.',
+      ],
+      media: '/blogs/standing-desk-topper/6-use-auto-screw.png',
+      mediaType: 'image',
+      alt: 'Step 6 using auto screw in WoodWorker',
+    },
+    {
+      id: 7,
+      title: 'Review cut list and shopping list',
+      description: 'Verified required materials and exact cuts from the right-side BOM tools.',
+      how: [
+        'Open the right BOM panel to inspect Shopping and Cuts.',
+        'Export reports when ready so buying and cutting stay organized.',
+      ],
+      media: '/blogs/standing-desk-topper/7-cut-list-shopping-list.png',
+      mediaType: 'image',
+      alt: 'Step 7 cut list and shopping list view in WoodWorker',
+    },
+    {
+      id: 8,
+      title: 'Build result',
+      description: 'After a couple of hours and scrap materials, I had a usable standing desk topper and much better neck comfort.',
+      how: [
+        'Export your design JSON so it can be imported and revised later.',
+        'Re-open the file anytime to iterate or share with someone else.',
+      ],
+      media: '/blogs/standing-desk-topper/8-actually-made-it.png',
+      mediaType: 'image',
+      alt: 'Finished standing desk topper project built from the design',
+    },
+  ];
+
+  const openImportedDesign = (openInNewTab: boolean) => {
+    window.localStorage.setItem(PENDING_PROJECT_IMPORT_PAYLOAD_KEY, JSON.stringify(standingDeskTopperProject));
+    window.localStorage.setItem(PENDING_PROJECT_IMPORT_KEY, STANDING_DESK_TOPPER_IMPORT_ASSET);
+    if (openInNewTab) {
+      const appUrl = `${window.location.origin}${window.location.pathname}#/app`;
+      window.open(appUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    openApp();
+  };
+
+  return (
+    <div className="space-y-4">
+      <button
+        onClick={backToBlog}
+        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+      >
+        Back to Blog
+      </button>
+
+      <article className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm space-y-5">
+        <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 sm:p-5">
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+            <Hammer size={13} />
+            Real Build Story
+          </div>
+          <h1 className="mt-3 text-2xl sm:text-3xl font-semibold text-slate-900">
+            Why I made WoodWorker, and how it helped fix my neck pain
+          </h1>
+          <p className="mt-3 text-slate-700 max-w-4xl">
+            I noticed that my neck was hurting badly while sitting at my computer. I wanted better posture and blood flow, so I decided to convert my
+            desk into a standing setup.
+          </p>
+          <p className="mt-2 text-slate-700 max-w-4xl">
+            Prebuilt options were expensive, and I had never done woodworking before, so I built software to help me plan with confidence. I sourced
+            scrap wood from a friend and found basic tools at home.
+          </p>
+          <p className="mt-2 text-slate-700 max-w-4xl">
+            The workflow below is intentionally practical: each step explains which panel/tool I used so someone new can reproduce the same process.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => openImportedDesign(false)}
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Try My Design in Build
+              <ArrowRight size={14} />
+            </button>
+            <button
+              onClick={() => openImportedDesign(true)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Open in New Tab
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            The design auto-loads from <code>standing-desk-topper.json</code>.
+          </p>
+        </div>
+
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-slate-900">How I planned the build in WoodWorker</h2>
+          <p className="text-sm text-slate-700">
+            This was my exact planning sequence from measurements to hardware placement, then cut and shopping prep.
+          </p>
+          <div className="space-y-4">
+            {steps.map((step) => (
+              <div key={step.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-900 px-2 text-xs font-semibold text-white">
+                    {step.id}
+                  </span>
+                  <h3 className="text-base font-semibold text-slate-900">{step.title}</h3>
+                </div>
+                <p className="mt-2 text-sm text-slate-700">{step.description}</p>
+                <ul className="mt-2 space-y-1 text-sm text-slate-700 list-disc list-inside">
+                  {step.how.map((hint) => (
+                    <li key={`${step.id}-${hint}`}>{hint}</li>
+                  ))}
+                </ul>
+                <div className="mt-3 mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  {step.mediaType === 'video' ? (
+                    <video
+                      className="h-auto w-full object-cover"
+                      src={step.media}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      controls
+                      preload="metadata"
+                    />
+                  ) : (
+                    <img className="h-auto w-full object-cover" src={step.media} alt={step.alt} loading="lazy" />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <h2 className="text-lg font-semibold text-slate-900">Result</h2>
+          <p className="mt-2 text-sm text-slate-700">
+            After a few hours of build time and low-cost materials, I ended up with the exact standing desk topper I wanted. It is fully usable, and my
+            neck pain is much better than before.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => openImportedDesign(false)}
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Build This Design
+              <ArrowRight size={14} />
+            </button>
+            <button
+              onClick={() => openImportedDesign(true)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Build in New Tab
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="text-base font-semibold text-slate-900">Why this mattered</h2>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3 text-sm text-slate-700">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <ClipboardList size={12} />
+                Planning clarity
+              </div>
+              <p className="mt-1">Confidence before cutting, even with zero prior woodworking experience.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <ShoppingCart size={12} />
+                Materials control
+              </div>
+              <p className="mt-1">Shopping list + cut list reduced guesswork and wasted trips.</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <Download size={12} />
+                Reusable design
+              </div>
+              <p className="mt-1">Saved locally so I can import and iterate whenever I want.</p>
+            </div>
+          </div>
+        </section>
+      </article>
+    </div>
+  );
+};
+
 const BlogPostPage = ({ post, backToBlog, openApp }: { post: BlogPost; backToBlog: () => void; openApp: () => void }) => {
   if (post.slug === INTERACTIVE_TUTORIAL_SLUG) {
     return <InteractiveTutorialBlog openApp={openApp} backToBlog={backToBlog} />;
   }
   if (post.slug === ADVANCED_FEATURES_SLUG) {
     return <AdvancedFeaturesBlog openApp={openApp} backToBlog={backToBlog} />;
+  }
+  if (post.slug === STANDING_DESK_TOPPER_SLUG) {
+    return <StandingDeskTopperStoryBlog openApp={openApp} backToBlog={backToBlog} />;
   }
 
   return (
