@@ -1706,8 +1706,8 @@ export const Sidebar: React.FC = () => {
         <div className="text-xs text-slate-500">
           <p>Controls:</p>
           <ul className="list-disc list-inside mt-1 space-y-1">
-            <li>Left Click to Select</li>
-            <li>Right Click to Orbit</li>
+            <li>Left Click to Select (drag to Orbit)</li>
+            <li>Right Click to Pan</li>
             <li>Scroll to Zoom</li>
             <li>Use toolbar to Move/Rotate</li>
           </ul>
