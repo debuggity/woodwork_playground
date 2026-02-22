@@ -103,38 +103,50 @@ const BLOG_POSTS: BlogPost[] = [
   },
   {
     slug: 'choosing-screw-size-quickly-in-cabinet-projects',
-    title: 'Choosing screw size quickly in cabinet projects',
+    title: 'Choosing wood screw size quickly for cabinet and furniture projects',
     date: 'February 2026',
-    summary: 'Pick the right screw size quickly for cabinet and furniture builds.',
+    summary: 'A practical beginner-friendly guide to choosing #8, #10, or #12 wood screws by material thickness, edge distance, and load.',
     body: [
-      'Use #8 x 1-1/4" for light-duty jobs like trim, brackets, and thinner stock.',
-      'For most furniture and 2x joining, #10 x 2-1/2" is the workhorse size.',
-      'Use #12 x 3" when structure and pull strength matter more than appearance.',
-      'If edge distance is tight, pre-drill and reduce diameter before increasing length.',
+      'If you want faster, cleaner joinery, screw size selection matters more than most people think. The right length and diameter reduce split-outs, improve pull strength, and make final assembly easier.',
+      'For light-duty woodworking such as trim, thin sheet goods, and small brackets, start with #8 x 1-1/4 in screws. They are easier to drive and reduce blowout risk near edges.',
+      'For most furniture and 2x lumber projects, #10 x 2-1/2 in is a strong default. It gives reliable bite through one piece and enough embedment into the second piece for day-to-day structural use.',
+      'For heavier shelves, thicker stock, and high-load connections, move to #12 x 3 in screws. This is the better option when anti-wobble and long-term stiffness matter.',
+      'A quick sizing rule: target screw penetration into the receiving piece at roughly 1 to 1.5 times that piece thickness when practical, while keeping tip blow-through under control.',
+      'Near edges or on plywood layers, pre-drill pilot holes and reduce diameter before increasing length. This improves consistency and lowers the chance of cracking veneers or end grain splits.',
+      'In WoodWorker, plan fastener layout first with Auto Screw, then verify edge spacing in your view before committing to final hardware count.',
+      'For SEO and real project planning keywords: wood screw size chart, cabinet screw length, screw diameter for plywood, and furniture joint screw selection are all covered by this workflow.',
     ],
   },
   {
     slug: 'how-to-avoid-edge-blowout-when-placing-screws',
-    title: 'How to avoid edge blowout when placing screws',
+    title: 'How to avoid edge blowout when placing wood screws',
     date: 'January 2026',
-    summary: 'Simple techniques to reduce split-outs and edge failures when fastening.',
+    summary: 'Step-by-step techniques to prevent plywood edge split-outs, weak joints, and ugly screw exits in woodworking builds.',
     body: [
-      'Keep screws away from weak edges and corners whenever possible.',
-      'Pilot holes help a lot on hardwoods and plywood edge fastening.',
-      'Use smaller screws near narrow overlaps, then increase count instead of diameter.',
-      'When possible, stagger screw lines to distribute stress across the joint.',
+      'Edge blowout usually comes from three causes: screws too close to edges, diameter too large for the material, or no pilot hole in brittle stock.',
+      'First, increase edge distance whenever possible. Even a small shift inward can dramatically reduce cracking in plywood and hardwood strips.',
+      'Second, pre-drill pilot holes for edge fastening, especially on dense woods or thin ply. Pilot holes reduce driving force and let threads cut cleanly instead of wedging fibers apart.',
+      'Third, choose smaller screws for narrow overlaps. Two smaller screws spaced correctly are often stronger and cleaner than one oversized fastener near a corner.',
+      'Use staggered screw lines when fastening long seams. Staggering spreads stress and helps avoid creating a single fracture line along the grain.',
+      'Countersink carefully if screw heads need to sit flush. Over-countersinking removes top-layer material and can weaken thin panels around the head.',
+      'Inside WoodWorker, use Select Assist and Edge Snap to place parts accurately, then use Auto Screw to prototype screw locations without committing to risky edge placements.',
+      'If a joint still looks risky, redesign with a cleat or backing strip. Adding support geometry is usually better than forcing larger screws into weak edges.',
     ],
   },
   {
     slug: 'why-planning-in-3d-saves-shop-time',
-    title: 'Why planning in 3D saves shop time',
+    title: 'Why 3D woodworking planning saves shop time and material waste',
     date: 'December 2025',
-    summary: 'Catch fit and sequence problems before they become material waste.',
+    summary: 'See why digital woodworking plans reduce rework, improve cut accuracy, and speed up real-world builds for beginners and pros.',
     body: [
-      'Most project mistakes happen in layout and sequence, not cutting speed.',
-      '3D planning catches collisions and awkward tool access before shop work begins.',
-      'It also improves your cut list quality by surfacing redundant or conflicting parts.',
-      'A clean digital plan means less rework, fewer extra trips, and faster assembly.',
+      'Most expensive woodworking mistakes do not happen at the saw. They happen earlier in layout, sizing, and assembly order.',
+      'A 3D planning workflow helps you catch part collisions, impossible screw angles, and awkward assembly sequences before buying extra material.',
+      'You can test dimensions quickly, duplicate parts, and validate spacing with snapping tools before you touch lumber in the shop.',
+      'Digital planning also improves cut-list quality. When parts are modeled correctly, your cuts list and shopping list are cleaner, which means fewer guesswork purchases.',
+      'For new builders, this removes a lot of anxiety. You can preview the full build, check fit, and rehearse joins in software instead of learning every lesson on scrap costs.',
+      'For experienced builders, it saves throughput time. You spend less time re-measuring and more time making clean cuts and accurate assemblies.',
+      'In WoodWorker, practical speed comes from combining move/rotate tools, edge snap, auto-centering camera, and export/import to iterate versions quickly.',
+      'If your goal is faster projects with fewer surprises, 3D woodworking design software is one of the highest-leverage upgrades you can make.',
     ],
   },
 ];
@@ -362,6 +374,12 @@ const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
             <div className="mb-2 inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-700">
               <Cpu size={12} />
               Advanced Guide
+            </div>
+          ) : null}
+          {post.slug === STANDING_DESK_TOPPER_SLUG ? (
+            <div className="mb-2 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+              <Hammer size={12} />
+              Tutorial Blog
             </div>
           ) : null}
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">{post.date}</p>
@@ -2406,7 +2424,7 @@ const TermsPage = () => (
 const ContactPage = () => (
   <SectionCard title="Contact">
     <p>Questions, bug reports, or partnership inquiries are welcome.</p>
-    <p>Email: support@woodworker.app</p>
+    <p>Email: ippity-dev@proton.me</p>
     <p>Response window: typically 2-3 business days.</p>
   </SectionCard>
 );
