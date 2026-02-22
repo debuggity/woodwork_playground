@@ -2421,13 +2421,54 @@ const TermsPage = () => (
   </SectionCard>
 );
 
-const ContactPage = () => (
-  <SectionCard title="Contact">
-    <p>Questions, bug reports, or partnership inquiries are welcome.</p>
-    <p>Email: ippity-dev@proton.me</p>
-    <p>Response window: typically 2-3 business days.</p>
-  </SectionCard>
-);
+const ContactPage = () => {
+  const [copied, setCopied] = useState(false);
+  const email = 'ippity-dev@proton.me';
+
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-6 sm:p-8 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Contact</p>
+        <h1 className="mt-2 text-2xl sm:text-3xl font-semibold text-slate-900">Get in touch</h1>
+        <p className="mt-3 max-w-2xl text-slate-700">
+          Questions, bug reports, or partnership inquiries are welcome.
+        </p>
+
+        <div className="mt-5 rounded-xl border border-blue-200 bg-white p-4 sm:p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Best Contact Method</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+            <span className="break-all text-lg sm:text-2xl font-semibold text-slate-800">{email}</span>
+            <button
+              onClick={copyEmail}
+              className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-white px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+              title="Copy email"
+            >
+              <Copy size={13} />
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <p className="mt-2 text-sm text-slate-600">Use the copy button to paste the email into your mail app.</p>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+        <p className="text-sm text-slate-700">
+          <strong>Response window:</strong> typically 2-3 business days.
+        </p>
+      </section>
+    </div>
+  );
+};
 
 const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: RouteId) => void; activePage: RouteId }) => (
   <div className="fixed left-1/2 -translate-x-1/2 bottom-3 z-50 max-w-[calc(100vw-1rem)] rounded-lg border border-slate-200 bg-white/95 backdrop-blur px-3 py-2 shadow-sm">
