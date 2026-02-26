@@ -15,6 +15,18 @@ type PartTemplate = {
   category: LibraryCategory;
   hardwareKind?: HardwareKind;
 };
+type LibraryGroupKind = 'lumber' | 'plywood' | 'screws' | 'single';
+type LibraryPartGroup = {
+  id: string;
+  title: string;
+  description: string;
+  kind: LibraryGroupKind;
+  options: PartTemplate[];
+};
+type AddPartOptions = {
+  dimensions?: [number, number, number];
+  offsetXZ?: [number, number];
+};
 
 const COMMON_PARTS: PartTemplate[] = [
   { name: '2x4 Lumber', dimensions: [1.5, 3.5, 96], type: 'lumber', category: 'lumber', color: '#eecfa1' },
@@ -28,8 +40,12 @@ const COMMON_PARTS: PartTemplate[] = [
   { name: '1x6 Lumber', dimensions: [0.75, 5.5, 96], type: 'lumber', category: 'lumber', color: '#f2d39f' },
   { name: 'Wood Dowel 1/4" x 36"', dimensions: [0.25, 0.25, 36], type: 'hardware', category: 'lumber', hardwareKind: 'dowel', color: '#d4a373' },
   { name: 'Wood Dowel 3/8" x 36"', dimensions: [0.375, 0.375, 36], type: 'hardware', category: 'lumber', hardwareKind: 'dowel', color: '#c58e5b' },
-  { name: 'Plywood 3/4"', dimensions: [48, 0.75, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
-  { name: 'Plywood 1/2"', dimensions: [48, 0.5, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 1/2" 2x4', dimensions: [24, 0.5, 48], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 1/2" 4x4', dimensions: [48, 0.5, 48], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 1/2" 4x8', dimensions: [48, 0.5, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 3/4" 2x4', dimensions: [24, 0.75, 48], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 3/4" 4x4', dimensions: [48, 0.75, 48], type: 'sheet', category: 'sheet', color: '#dec49a' },
+  { name: 'Plywood 3/4" 4x8', dimensions: [48, 0.75, 96], type: 'sheet', category: 'sheet', color: '#dec49a' },
   { name: 'MDF 3/4"', dimensions: [49, 0.75, 97], type: 'sheet', category: 'sheet', color: '#d8c7a6' },
   { name: 'Cabinet Hinge', dimensions: [1.25, 2.5, 0.12], type: 'hardware', category: 'hardware', hardwareKind: 'hinge', color: '#64748b' },
   { name: 'Gate Hinge', dimensions: [1.75, 4.0, 0.14], type: 'hardware', category: 'hardware', hardwareKind: 'hinge', color: '#475569' },
@@ -74,6 +90,75 @@ const STAIN_PRESETS: StainPreset[] = [
 ];
 
 const DEFAULT_PART_COLORS = new Map(COMMON_PARTS.map((part) => [part.name, part.color]));
+
+const getTemplateKey = (part: PartTemplate) => [
+  part.name,
+  part.type,
+  part.hardwareKind ?? 'none',
+  part.dimensions.join('x'),
+].join('|');
+
+const dedupeTemplatesByDimensions = (templates: PartTemplate[]) => {
+  const unique = new Map<string, PartTemplate>();
+  templates.forEach((template) => {
+    const key = [
+      template.type,
+      template.hardwareKind ?? 'none',
+      template.dimensions.join('x'),
+    ].join('|');
+    if (!unique.has(key)) {
+      unique.set(key, template);
+    }
+  });
+  return Array.from(unique.values());
+};
+
+const formatFractionalInches = (value: number) => {
+  if (Math.abs(value - 0.75) < 0.001) return '3/4"';
+  if (Math.abs(value - 0.5) < 0.001) return '1/2"';
+  if (Math.abs(value - 0.375) < 0.001) return '3/8"';
+  if (Math.abs(value - 0.25) < 0.001) return '1/4"';
+  if (Number.isInteger(value)) return `${value}"`;
+  return `${value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}"`;
+};
+
+const formatFeetFromInches = (value: number) => {
+  const feet = value / 12;
+  if (Math.abs(feet - Math.round(feet)) < 0.001) return `${Math.round(feet)}`;
+  return feet.toFixed(1).replace(/\.0$/, '');
+};
+
+const getLumberOptionLabel = (template: PartTemplate) => {
+  const nominal = template.name.match(/\b\d+x\d+\b/i)?.[0];
+  const section = nominal ?? `${template.dimensions[0]}" x ${template.dimensions[1]}"`;
+  const lengthLabel = Math.abs(template.dimensions[2] / 12 - Math.round(template.dimensions[2] / 12)) < 0.001
+    ? `${Math.round(template.dimensions[2] / 12)}ft`
+    : `${template.dimensions[2]}"`;
+  return `${section} x ${lengthLabel}`;
+};
+
+const getPlywoodOptionLabel = (template: PartTemplate) => {
+  const thicknessLabel = formatFractionalInches(template.dimensions[1]);
+  const widthFeet = formatFeetFromInches(template.dimensions[0]);
+  const lengthFeet = formatFeetFromInches(template.dimensions[2]);
+  return `${thicknessLabel} - ${widthFeet}x${lengthFeet}`;
+};
+
+const getScrewOptionLabel = (template: PartTemplate) => template.name;
+
+const sanitizeDimensions = (
+  next: [number, number, number] | undefined,
+  fallback: [number, number, number]
+): [number, number, number] => {
+  if (!next) return [...fallback] as [number, number, number];
+  const safe = [...fallback] as [number, number, number];
+  next.forEach((value, index) => {
+    if (Number.isFinite(value) && value > 0) {
+      safe[index as 0 | 1 | 2] = value;
+    }
+  });
+  return safe;
+};
 
 const getInitialStainPresetId = (): StainPreset['id'] => {
   if (typeof window === 'undefined') return 'unstained';
@@ -696,6 +781,10 @@ export const Sidebar: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'library' | 'scene' | 'properties'>('library');
   const [libraryCategory, setLibraryCategory] = useState<LibraryCategory | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeAddGroupId, setActiveAddGroupId] = useState<string | null>(null);
+  const [librarySelections, setLibrarySelections] = useState<Record<string, string>>({});
+  const [libraryQuantities, setLibraryQuantities] = useState<Record<string, number>>({});
+  const [libraryDimensions, setLibraryDimensions] = useState<Record<string, [number, number, number]>>({});
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>(getInitialStainPresetId);
 
@@ -728,16 +817,18 @@ export const Sidebar: React.FC = () => {
     }));
   };
 
-  const handleAddPart = (partTemplate: PartTemplate) => {
+  const handleAddPart = (partTemplate: PartTemplate, options?: AddPartOptions) => {
     setTool('select');
+    const dimensions = sanitizeDimensions(options?.dimensions, partTemplate.dimensions);
+    const [offsetX, offsetZ] = options?.offsetXZ ?? [0, 0];
 
     const newPart: PartData = {
       id: uuidv4(),
       name: partTemplate.name,
       type: partTemplate.type as PartData['type'],
       hardwareKind: partTemplate.hardwareKind as HardwareKind | undefined,
-      dimensions: [...partTemplate.dimensions] as [number, number, number],
-      position: [0, partTemplate.dimensions[1] / 2, 0],
+      dimensions: [...dimensions] as [number, number, number],
+      position: [offsetX, dimensions[1] / 2, offsetZ],
       rotation: [0, 0, 0],
       color: partTemplate.color,
       profile: partTemplate.type === 'hardware'
@@ -750,7 +841,7 @@ export const Sidebar: React.FC = () => {
           angle: 0,
           minAngle: (-110 * Math.PI) / 180,
           maxAngle: (110 * Math.PI) / 180,
-          pinOffset: Math.max(partTemplate.dimensions[0] * 0.35, 0.2),
+          pinOffset: Math.max(dimensions[0] * 0.35, 0.2),
         }
         : undefined,
     };
@@ -761,6 +852,35 @@ export const Sidebar: React.FC = () => {
     }
 
     addPart(newPart);
+  };
+
+  const handleAddPartBatch = (
+    partTemplate: PartTemplate,
+    quantity: number,
+    dimensionsOverride?: [number, number, number]
+  ) => {
+    const safeQuantity = Math.max(1, Math.min(200, Math.floor(quantity)));
+    const dimensions = sanitizeDimensions(dimensionsOverride, partTemplate.dimensions);
+    if (safeQuantity === 1) {
+      handleAddPart(partTemplate, { dimensions });
+      return;
+    }
+
+    const columns = Math.ceil(Math.sqrt(safeQuantity));
+    const rows = Math.ceil(safeQuantity / columns);
+    const xStep = dimensions[0] + Math.max(1, dimensions[0] * 0.25);
+    const zStep = dimensions[2] + Math.max(1, dimensions[2] * 0.25);
+
+    for (let i = 0; i < safeQuantity; i += 1) {
+      const row = Math.floor(i / columns);
+      const column = i % columns;
+      const offsetX = (column - (columns - 1) / 2) * xStep;
+      const offsetZ = (row - (rows - 1) / 2) * zStep;
+      handleAddPart(partTemplate, {
+        dimensions,
+        offsetXZ: [offsetX, offsetZ],
+      });
+    }
   };
 
   const updateDimension = (index: number, value: string) => {
@@ -1073,6 +1193,78 @@ export const Sidebar: React.FC = () => {
     return part.category === libraryCategory;
   });
 
+  const libraryPartGroups: LibraryPartGroup[] = (() => {
+    const groups: LibraryPartGroup[] = [];
+    const lumberCandidates = visibleLibraryParts.filter((part) => part.type === 'lumber');
+    const plywoodCandidates = visibleLibraryParts.filter((part) =>
+      part.type === 'sheet' && part.name.toLowerCase().includes('plywood')
+    );
+    const screwCandidates = visibleLibraryParts.filter((part) =>
+      part.type === 'hardware' && part.hardwareKind === 'fastener'
+    );
+
+    if (lumberCandidates.length > 0) {
+      const options = dedupeTemplatesByDimensions(lumberCandidates).sort((a, b) =>
+        a.dimensions[0] - b.dimensions[0]
+        || a.dimensions[1] - b.dimensions[1]
+        || a.dimensions[2] - b.dimensions[2]
+      );
+      groups.push({
+        id: 'group-lumber',
+        title: 'Lumber',
+        description: 'One selector for common board/post sizes.',
+        kind: 'lumber',
+        options,
+      });
+    }
+
+    if (plywoodCandidates.length > 0) {
+      const options = dedupeTemplatesByDimensions(plywoodCandidates).sort((a, b) =>
+        a.dimensions[1] - b.dimensions[1]
+        || a.dimensions[0] - b.dimensions[0]
+        || a.dimensions[2] - b.dimensions[2]
+      );
+      groups.push({
+        id: 'group-plywood',
+        title: 'Plywood',
+        description: 'Quick-pick sheet sizes: 2x4, 4x4, 4x8.',
+        kind: 'plywood',
+        options,
+      });
+    }
+
+    if (screwCandidates.length > 0) {
+      const options = dedupeTemplatesByDimensions(screwCandidates).sort((a, b) =>
+        a.dimensions[1] - b.dimensions[1]
+      );
+      groups.push({
+        id: 'group-screws',
+        title: 'Screws',
+        description: 'Quick-pick wood screw sizes.',
+        kind: 'screws',
+        options,
+      });
+    }
+
+    visibleLibraryParts
+      .filter((part) =>
+        part.type !== 'lumber'
+        && !(part.type === 'sheet' && part.name.toLowerCase().includes('plywood'))
+        && !(part.type === 'hardware' && part.hardwareKind === 'fastener')
+      )
+      .forEach((part) => {
+        groups.push({
+          id: `single-${getTemplateKey(part)}`,
+          title: part.name,
+          description: '',
+          kind: 'single',
+          options: [part],
+        });
+      });
+
+    return groups;
+  })();
+
   const currentProfile = selectedPart?.profile ?? { type: 'rect' as const };
   const profileControlValue = currentProfile.type === 'polygon' ? 'rect' : currentProfile.type;
   const attachedHinge = selectedPart?.attachment
@@ -1166,7 +1358,10 @@ export const Sidebar: React.FC = () => {
               {LIBRARY_CATEGORY_META.map((category) => (
                 <button
                   key={category.id}
-                  onClick={() => setLibraryCategory(category.id)}
+                  onClick={() => {
+                    setLibraryCategory(category.id);
+                    setActiveAddGroupId(null);
+                  }}
                   className={clsx(
                     'px-2.5 py-1 text-xs rounded-full border transition-colors',
                     libraryCategory === category.id
@@ -1212,28 +1407,192 @@ export const Sidebar: React.FC = () => {
               </div>
             ) : (
               <>
-                {visibleLibraryParts.length === 0 ? (
+                {libraryPartGroups.length === 0 ? (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                     No parts in this category.
                   </div>
                 ) : (
-                  visibleLibraryParts.map((part) => (
-                    <button
-                      key={part.name}
-                      onClick={() => handleAddPart(part)}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
-                    >
-                      <div>
-                        <div className="font-medium text-slate-700">{part.name}</div>
-                        <div className="text-xs text-slate-500">
-                          {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                  libraryPartGroups.map((group) => {
+                    if (group.kind === 'single') {
+                      const part = group.options[0];
+                      return (
+                        <button
+                          key={group.id}
+                          onClick={() => handleAddPart(part)}
+                          className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+                        >
+                          <div>
+                            <div className="font-medium text-slate-700">{part.name}</div>
+                            <div className="text-xs text-slate-500">
+                              {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                            </div>
+                          </div>
+                          <div className="opacity-0 group-hover:opacity-100 text-blue-500">
+                            <Plus size={20} />
+                          </div>
+                        </button>
+                      );
+                    }
+
+                    const selectedTemplateKey = librarySelections[group.id] ?? getTemplateKey(group.options[0]);
+                    const selectedTemplate = group.options.find((part) => getTemplateKey(part) === selectedTemplateKey) ?? group.options[0];
+                    const labelForOption = group.kind === 'lumber'
+                      ? getLumberOptionLabel
+                      : group.kind === 'plywood'
+                        ? getPlywoodOptionLabel
+                        : getScrewOptionLabel;
+                    const selectedQuantity = libraryQuantities[group.id] ?? 1;
+                    const isAddPanelOpen = activeAddGroupId === group.id;
+                    const quantityLabel = selectedQuantity > 1 ? `${selectedQuantity} pcs` : '1 pc';
+                    const selectedDimensions = libraryDimensions[group.id] ?? [...selectedTemplate.dimensions] as [number, number, number];
+
+                    return (
+                      <div
+                        key={group.id}
+                        onClick={() => {
+                          if (!isAddPanelOpen) {
+                            setActiveAddGroupId(group.id);
+                          }
+                        }}
+                        className={clsx(
+                          'group relative rounded-lg border border-slate-200 bg-slate-50 p-3 pr-11 space-y-2',
+                          !isAddPanelOpen && 'cursor-pointer'
+                        )}
+                      >
+                        <div>
+                          <div className="font-medium text-slate-700">{group.title}</div>
+                          <div className="text-xs text-slate-500">{group.description}</div>
                         </div>
+                        <button
+                          onClick={() => setActiveAddGroupId((prev) => (prev === group.id ? null : group.id))}
+                          className={clsx(
+                            'absolute right-3 rounded-md p-1.5 transition-colors transition-opacity duration-150 focus-visible:opacity-100',
+                            isAddPanelOpen
+                              ? 'top-3 opacity-100 bg-blue-100 text-blue-600 hover:bg-blue-200'
+                              : 'top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-blue-500 hover:bg-blue-100'
+                          )}
+                          title={isAddPanelOpen ? `Close ${group.title} options` : `Add ${group.title}`}
+                        >
+                          <Plus size={18} className={clsx('transition-transform', isAddPanelOpen && 'rotate-45')} />
+                        </button>
+                        <div className="text-xs text-slate-600">
+                          {labelForOption(selectedTemplate)} - {quantityLabel}
+                        </div>
+                        {isAddPanelOpen && (
+                          <div className="rounded-md border border-slate-200 bg-white p-2.5 space-y-2">
+                            <div>
+                              <label className="text-[10px] text-slate-500">Type</label>
+                              <select
+                                value={getTemplateKey(selectedTemplate)}
+                                onChange={(e) => {
+                                  const nextKey = e.target.value;
+                                  const nextTemplate = group.options.find((part) => getTemplateKey(part) === nextKey) ?? group.options[0];
+                                  setLibrarySelections((prev) => ({ ...prev, [group.id]: nextKey }));
+                                  setLibraryDimensions((prev) => ({
+                                    ...prev,
+                                    [group.id]: [...nextTemplate.dimensions] as [number, number, number],
+                                  }));
+                                }}
+                                className="mt-0.5 w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                              >
+                                {group.options.map((part) => (
+                                  <option key={getTemplateKey(part)} value={getTemplateKey(part)}>
+                                    {labelForOption(part)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-500">Quantity</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={200}
+                                step={1}
+                                value={selectedQuantity}
+                                onChange={(e) => {
+                                  const numeric = Number.parseInt(e.target.value, 10);
+                                  const nextValue = Number.isNaN(numeric) ? 1 : Math.max(1, Math.min(200, numeric));
+                                  setLibraryQuantities((prev) => ({ ...prev, [group.id]: nextValue }));
+                                }}
+                                className="mt-0.5 w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-500">Dimensions (inches)</label>
+                              <div className="mt-0.5 grid grid-cols-3 gap-1.5">
+                                <input
+                                  type="number"
+                                  min={0.01}
+                                  step={0.01}
+                                  value={selectedDimensions[0]}
+                                  onChange={(e) => {
+                                    const numeric = Number.parseFloat(e.target.value);
+                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    setLibraryDimensions((prev) => ({
+                                      ...prev,
+                                      [group.id]: [numeric, selectedDimensions[1], selectedDimensions[2]],
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                  title="Width"
+                                  aria-label={`${group.title} width`}
+                                />
+                                <input
+                                  type="number"
+                                  min={0.01}
+                                  step={0.01}
+                                  value={selectedDimensions[1]}
+                                  onChange={(e) => {
+                                    const numeric = Number.parseFloat(e.target.value);
+                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    setLibraryDimensions((prev) => ({
+                                      ...prev,
+                                      [group.id]: [selectedDimensions[0], numeric, selectedDimensions[2]],
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                  title="Height"
+                                  aria-label={`${group.title} height`}
+                                />
+                                <input
+                                  type="number"
+                                  min={0.01}
+                                  step={0.01}
+                                  value={selectedDimensions[2]}
+                                  onChange={(e) => {
+                                    const numeric = Number.parseFloat(e.target.value);
+                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    setLibraryDimensions((prev) => ({
+                                      ...prev,
+                                      [group.id]: [selectedDimensions[0], selectedDimensions[1], numeric],
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                                  title="Length"
+                                  aria-label={`${group.title} length`}
+                                />
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">W x H x L</div>
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {selectedDimensions[0]}" x {selectedDimensions[1]}" x {selectedDimensions[2]}"
+                            </div>
+                            <button
+                              onClick={() => {
+                                handleAddPartBatch(selectedTemplate, selectedQuantity, selectedDimensions);
+                                setActiveAddGroupId(null);
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                            >
+                              <Plus size={14} />
+                              Add {selectedQuantity}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="opacity-0 group-hover:opacity-100 text-blue-500">
-                        <Plus size={20} />
-                      </div>
-                    </button>
-                  ))
+                    );
+                  })
                 )}
               </>
             )}
@@ -1716,3 +2075,4 @@ export const Sidebar: React.FC = () => {
     </div>
   );
 };
+
