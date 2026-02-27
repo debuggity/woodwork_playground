@@ -2015,7 +2015,7 @@ const AdvancedFeaturesBlog = ({ openApp, backToBlog }: { openApp: () => void; ba
             </div>
             <div className="rounded-lg border border-blue-200 bg-white p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Result</div>
-              <div className="mt-1 text-sm text-slate-700">Two screws are attempted; failed placements should place nothing.</div>
+              <div className="mt-1 text-sm text-slate-700">Pick a target from 1 to 4 screws (default 2). Failed placements should place nothing.</div>
             </div>
           </div>
         </div>

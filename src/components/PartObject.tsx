@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect, useCallback } from 'react';
+import React, { useRef, useMemo, useEffect, useCallback, useState } from 'react';
 import { ThreeEvent, useFrame, useThree } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -17,6 +17,7 @@ interface PartObjectProps {
 }
 
 const SELECTION_SUPPRESS_MS = 180;
+const DUPLICATE_PULSE_MS = 520;
 let suppressSelectionUntil = 0;
 
 const getLCutPoints = (
@@ -94,6 +95,7 @@ const EDGE_SNAP_THRESHOLD = 0.35;
 const EDGE_SNAP_MIN_OVERLAP = 0.2;
 const EDGE_SNAP_TOUCH_GAP = 0.35;
 const EDGE_SNAP_EPS = 0.001;
+const EDGE_SNAP_COINCIDENT_SKIP_EPS = 0.02;
 
 type Aabb3 = {
   minX: number;
@@ -151,6 +153,9 @@ const computeEdgeSnappedPosition = (
   parts: PartData[]
 ): [number, number, number] => {
   const movingAabb = getPartAabbAtPosition(movingPart, position);
+  const movingSizeX = movingAabb.maxX - movingAabb.minX;
+  const movingSizeY = movingAabb.maxY - movingAabb.minY;
+  const movingSizeZ = movingAabb.maxZ - movingAabb.minZ;
   const bestDelta: { x: number | null; y: number | null; z: number | null } = {
     x: null,
     y: null,
@@ -162,10 +167,26 @@ const computeEdgeSnappedPosition = (
     if (other.type === 'hardware') return;
 
     const otherAabb = getPartAabbAtPosition(other, other.position);
+    const overlapX = getAxisOverlap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
     const overlapY = getAxisOverlap(movingAabb.minY, movingAabb.maxY, otherAabb.minY, otherAabb.maxY);
     const overlapZ = getAxisOverlap(movingAabb.minZ, movingAabb.maxZ, otherAabb.minZ, otherAabb.maxZ);
+    const gapX = getAxisGap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
     const gapY = getAxisGap(movingAabb.minY, movingAabb.maxY, otherAabb.minY, otherAabb.maxY);
     const gapZ = getAxisGap(movingAabb.minZ, movingAabb.maxZ, otherAabb.minZ, otherAabb.maxZ);
+    const otherSizeX = otherAabb.maxX - otherAabb.minX;
+    const otherSizeY = otherAabb.maxY - otherAabb.minY;
+    const otherSizeZ = otherAabb.maxZ - otherAabb.minZ;
+    const nearlyCoincident =
+      overlapX >= Math.min(movingSizeX, otherSizeX) - EDGE_SNAP_COINCIDENT_SKIP_EPS
+      && overlapY >= Math.min(movingSizeY, otherSizeY) - EDGE_SNAP_COINCIDENT_SKIP_EPS
+      && overlapZ >= Math.min(movingSizeZ, otherSizeZ) - EDGE_SNAP_COINCIDENT_SKIP_EPS
+      && gapX <= EDGE_SNAP_COINCIDENT_SKIP_EPS
+      && gapY <= EDGE_SNAP_COINCIDENT_SKIP_EPS
+      && gapZ <= EDGE_SNAP_COINCIDENT_SKIP_EPS;
+    if (nearlyCoincident) {
+      return;
+    }
+
     if (hasOverlapOrTouch(overlapY, gapY) && hasOverlapOrTouch(overlapZ, gapZ)) {
       const xCandidates = [
         otherAabb.minX - movingAabb.minX,
@@ -181,8 +202,6 @@ const computeEdgeSnappedPosition = (
       });
     }
 
-    const overlapX = getAxisOverlap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
-    const gapX = getAxisGap(movingAabb.minX, movingAabb.maxX, otherAabb.minX, otherAabb.maxX);
     if (hasOverlapOrTouch(overlapX, gapX) && hasOverlapOrTouch(overlapZ, gapZ)) {
       const yCandidates = [
         otherAabb.minY - movingAabb.minY,
@@ -335,16 +354,23 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const edgeSnapEnabled = useStore((state) => state.edgeSnapEnabled);
   const selectAssistEnabled = useStore((state) => state.selectAssistEnabled);
   const explodeFactor = useStore((state) => state.explodeFactor);
+  const lastDuplicatedId = useStore((state) => state.lastDuplicatedId);
+  const lastDuplicatedAt = useStore((state) => state.lastDuplicatedAt);
   const selectPart = useStore((state) => state.selectPart);
   const setHoveredId = useStore((state) => state.setHoveredId);
   const updatePart = useStore((state) => state.updatePart);
 
   const explodeGroupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
+  const [transformObject, setTransformObject] = useState<THREE.Object3D | null>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const transformStartRef = useRef<{ position: THREE.Vector3; rotation: THREE.Euler } | null>(null);
   const isTransformingRef = useRef(false);
   const transformSyncRafRef = useRef<number | null>(null);
+  const setMeshNode = useCallback((node: THREE.Mesh | null) => {
+    meshRef.current = node;
+    setTransformObject(node);
+  }, []);
 
   const shouldIgnoreSelection = (button?: number) => {
     if (button !== undefined && button !== 0) {
@@ -650,6 +676,13 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   }, [heatOverlayGeometry]);
 
   useFrame(({ clock }, delta) => {
+    const now = Date.now();
+    const duplicatePulseAge = now - lastDuplicatedAt;
+    const duplicatePulseActive =
+      data.id === lastDuplicatedId
+      && duplicatePulseAge >= 0
+      && duplicatePulseAge <= DUPLICATE_PULSE_MS;
+
     const explodeGroup = explodeGroupRef.current;
     if (explodeGroup) {
       const pulse = Math.sin(clock.elapsedTime * 3.2 + explodeMotion.phase) * explodeFactor * 0.35;
@@ -669,8 +702,29 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       explodeGroup.rotation.z = THREE.MathUtils.damp(explodeGroup.rotation.z, targetRotZ, 6.5, delta);
     }
 
+    if (meshRef.current) {
+      if (duplicatePulseActive) {
+        const t = duplicatePulseAge / DUPLICATE_PULSE_MS;
+        const bump = Math.sin(t * Math.PI) * 0.08;
+        meshRef.current.scale.setScalar(1 + bump);
+      } else if (
+        Math.abs(meshRef.current.scale.x - 1) > 0.0001
+        || Math.abs(meshRef.current.scale.y - 1) > 0.0001
+        || Math.abs(meshRef.current.scale.z - 1) > 0.0001
+      ) {
+        meshRef.current.scale.setScalar(1);
+      }
+    }
+
     const material = materialRef.current;
     if (!material) return;
+
+    if (duplicatePulseActive) {
+      const t = duplicatePulseAge / DUPLICATE_PULSE_MS;
+      material.emissive.set('#22d3ee');
+      material.emissiveIntensity = Math.max(0, 0.92 * (1 - t));
+      return;
+    }
 
     if (isHoveredInSceneList) {
       material.emissive.set('#16a34a');
@@ -776,6 +830,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   }, [controls, syncTransformToStore]);
 
   const showTransform = explodeFactor < 0.001 && isSelected && (tool === 'move' || tool === 'rotate');
+  const canShowTransform = showTransform && transformObject !== null;
   const mode = tool === 'rotate' ? 'rotate' : 'translate';
   const hingePinOffset = data.hinge?.pinOffset ?? Math.max(width * 0.35, 0.2);
   const hingeDirection = Math.sign(hingePinOffset || 1);
@@ -840,20 +895,9 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
 
   return (
     <>
-      {showTransform && (
-        <TransformControls
-          object={meshRef as unknown as React.MutableRefObject<THREE.Object3D>}
-          mode={mode}
-          onMouseDown={onTransformStart}
-          onMouseUp={onTransformEnd}
-          onObjectChange={onTransformObjectChange}
-          translationSnap={snapEnabled ? 0.125 : undefined}
-          rotationSnap={snapEnabled ? Math.PI / 8 : undefined}
-        />
-      )}
       <group ref={explodeGroupRef}>
         <mesh
-          ref={meshRef}
+          ref={setMeshNode}
           position={position}
           rotation={rotation}
           onClick={data.type === 'hardware' ? undefined : handleClick}
@@ -941,6 +985,17 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
           </mesh>
         )}
       </group>
+      {canShowTransform && (
+        <TransformControls
+          object={transformObject}
+          mode={mode}
+          onMouseDown={onTransformStart}
+          onMouseUp={onTransformEnd}
+          onObjectChange={onTransformObjectChange}
+          translationSnap={snapEnabled ? 0.125 : undefined}
+          rotationSnap={snapEnabled ? Math.PI / 8 : undefined}
+        />
+      )}
     </>
   );
 }, (prevProps, nextProps) => {

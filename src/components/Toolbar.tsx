@@ -635,6 +635,7 @@ export const Toolbar: React.FC = () => {
   const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
   const [isControlPanelMinimized, setIsControlPanelMinimized] = useState(false);
   const [isSpecialMenuOpen, setIsSpecialMenuOpen] = useState(false);
+  const [autoScrewTargetCount, setAutoScrewTargetCount] = useState(2);
   const [autoScrewFirstId, setAutoScrewFirstId] = useState<string | null>(null);
   const [autoScrewStatus, setAutoScrewStatus] = useState<{ tone: 'info' | 'success' | 'error'; text: string } | null>(null);
   const autoScrewLastHandledSelectionRef = useRef<string | null>(null);
@@ -692,14 +693,9 @@ export const Toolbar: React.FC = () => {
     if (!selectedId) return;
     const sourceId = selectedId;
     if (tool === 'move' || tool === 'rotate') {
-      const restoreTool = tool;
-      setTool('select');
-      window.requestAnimationFrame(() => {
-        duplicatePart(sourceId);
-        window.requestAnimationFrame(() => {
-          setTool(restoreTool);
-        });
-      });
+      // Keep duplicate in-place in transform modes; stability is handled by control/snap guards.
+      setHoveredId(null);
+      duplicatePart(sourceId);
       return;
     }
     duplicatePart(sourceId);
@@ -754,7 +750,7 @@ export const Toolbar: React.FC = () => {
       setAutoScrewFirstId(selectedId);
       setAutoScrewStatus({
         tone: 'info',
-        text: `First piece selected: ${pickedPart.name}. Step 2: click the second piece.`,
+        text: `Entry piece selected: ${pickedPart.name}.`,
       });
       return;
     }
@@ -767,12 +763,12 @@ export const Toolbar: React.FC = () => {
       return;
     }
 
-    const placement = autoScrewParts(autoScrewFirstId, selectedId);
+    const placement = autoScrewParts(autoScrewFirstId, selectedId, autoScrewTargetCount);
     if (placement.ok) {
       setAutoScrewFirstId(null);
       setAutoScrewStatus({
         tone: 'success',
-        text: `Placed ${placement.screwCount} screws. Reset to Step 1: pick an entry piece.`,
+        text: `Placed ${placement.screwCount} screw${placement.screwCount === 1 ? '' : 's'}.`,
       });
       autoScrewLastHandledSelectionRef.current = null;
       selectPart(null);
@@ -782,11 +778,11 @@ export const Toolbar: React.FC = () => {
     setAutoScrewFirstId(null);
     setAutoScrewStatus({
       tone: 'error',
-      text: `${placement.message} Reset to Step 1: pick an entry piece.`,
+      text: placement.message,
     });
     autoScrewLastHandledSelectionRef.current = null;
     selectPart(null);
-  }, [autoScrewFirstId, autoScrewParts, parts, selectPart, selectedId, tool]);
+  }, [autoScrewFirstId, autoScrewParts, autoScrewTargetCount, parts, selectPart, selectedId, tool]);
 
   const handleOpenExport = () => {
     setIsExportModalOpen(true);
@@ -796,10 +792,7 @@ export const Toolbar: React.FC = () => {
     setIsSpecialMenuOpen(false);
     setTool('auto-screw');
     setAutoScrewFirstId(null);
-    setAutoScrewStatus({
-      tone: 'info',
-      text: 'Step 1: pick entry piece (where screw head shows), then pick destination piece.',
-    });
+    setAutoScrewStatus(null);
     autoScrewLastHandledSelectionRef.current = null;
     selectPart(null);
   };
@@ -1461,10 +1454,27 @@ export const Toolbar: React.FC = () => {
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Auto Screw Mode</div>
-              <div className="mt-0.5 text-xs text-slate-700">
+              <div className="mt-0.5 text-[10px] text-slate-700">
                 {!autoScrewFirstPart
-                  ? 'Step 1: Select the entry piece (screw head side).'
-                  : `Step 2: Select the destination piece to join with ${autoScrewFirstPart.name}.`}
+                  ? `Step 1: Select the entry piece (screw head side). Target: ${autoScrewTargetCount} screw${autoScrewTargetCount === 1 ? '' : 's'}.`
+                  : `Step 2: Select the destination piece to join with ${autoScrewFirstPart.name}. Target: ${autoScrewTargetCount} screw${autoScrewTargetCount === 1 ? '' : 's'}.`}
+              </div>
+              <div className="mt-1.5 flex items-center gap-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">Screws</div>
+                {[1, 2, 3, 4].map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => setAutoScrewTargetCount(count)}
+                    className={`inline-flex h-5 min-w-5 items-center justify-center rounded border px-1 text-[10px] font-semibold transition-colors ${
+                      autoScrewTargetCount === count
+                        ? 'border-blue-500 bg-blue-600 text-white'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                    title={`Try placing ${count} screw${count === 1 ? '' : 's'}`}
+                  >
+                    {count}
+                  </button>
+                ))}
               </div>
               {autoScrewStatus && (
                 <div
@@ -1479,9 +1489,6 @@ export const Toolbar: React.FC = () => {
                   {autoScrewStatus.text}
                 </div>
               )}
-              <div className="mt-1 text-[10px] text-slate-500">
-                Hovered piece highlights in green.
-              </div>
             </div>
             <button
               onClick={handleExitAutoScrew}

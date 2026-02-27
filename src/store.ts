@@ -159,7 +159,9 @@ type ScrewPreset = {
 const AUTO_SCREW_CONTACT_GAP_TOLERANCE = 0.6;
 const AUTO_SCREW_OVERLAP_MIN = 0.08;
 const AUTO_SCREW_MIN_PENETRATION = 0.12;
-const AUTO_SCREW_REQUIRED_COUNT = 2;
+const AUTO_SCREW_DEFAULT_COUNT = 2;
+const AUTO_SCREW_MIN_COUNT = 1;
+const AUTO_SCREW_MAX_COUNT = 4;
 const AUTO_SCREW_MIN_DIR_ALIGNMENT = 0.02;
 // Keep screw axis close to the actual "through-joint" direction.
 // Large overlap along the screw axis usually means the screw is running
@@ -173,6 +175,15 @@ const AUTO_SCREW_PRESETS: ScrewPreset[] = [
   { name: '#10 x 2-1/2" Wood Screw', length: 2.5, diameter: 0.19 },
   { name: '#12 x 3" Wood Screw', length: 3, diameter: 0.216 },
 ];
+
+type AutoScrewPlacementCandidate = {
+  center: THREE.Vector3;
+  preset: ScrewPreset;
+  score: number;
+  u: number;
+  v: number;
+  edgeMargin: number;
+};
 
 const buildOrientedFrame = (part: PartData): OrientedFrame => {
   const quaternion = toQuaternion(part.rotation);
@@ -596,12 +607,153 @@ const getDirectionCandidates = (
   return candidates;
 };
 
+const clampAutoScrewCount = (value: number) => {
+  const finiteValue = Number.isFinite(value) ? value : AUTO_SCREW_DEFAULT_COUNT;
+  const rounded = Math.round(finiteValue);
+  return Math.max(AUTO_SCREW_MIN_COUNT, Math.min(AUTO_SCREW_MAX_COUNT, rounded));
+};
+
+const formatScrewCountLabel = (count: number) => (count === 1 ? '1 screw' : `${count} screws`);
+
+const chooseBestPlacementSet = (
+  possiblePlacements: AutoScrewPlacementCandidate[],
+  requestedCount: number,
+  options: {
+    targetSpacing: number;
+    tightSpace: boolean;
+    dirAlignment: number;
+    alongOverlap: number;
+  }
+) => {
+  if (possiblePlacements.length < requestedCount) {
+    return null;
+  }
+
+  if (requestedCount === 1) {
+    const directionBonus = options.dirAlignment * 0.6 - options.alongOverlap * 0.4;
+    let bestSingle:
+      | {
+          placements: AutoScrewPlacementCandidate[];
+          score: number;
+        }
+      | null = null;
+    for (const placement of possiblePlacements) {
+      const singleScore = placement.score + placement.edgeMargin * 0.16 + directionBonus;
+      if (!bestSingle || singleScore > bestSingle.score) {
+        bestSingle = {
+          placements: [placement],
+          score: singleScore,
+        };
+      }
+    }
+    return bestSingle;
+  }
+
+  const sortedByQuality = [...possiblePlacements].sort((a, b) => b.score - a.score);
+  const poolLimit = requestedCount === 4 ? 24 : 20;
+  const pool = sortedByQuality.slice(0, Math.min(sortedByQuality.length, poolLimit));
+  if (pool.length < requestedCount) {
+    return null;
+  }
+
+  const evaluateWithMinSpacing = (minSpacing: number) => {
+    let bestSet:
+      | {
+          placements: AutoScrewPlacementCandidate[];
+          score: number;
+        }
+      | null = null;
+
+    const active: AutoScrewPlacementCandidate[] = [];
+    const recurse = (startIndex: number) => {
+      if (active.length === requestedCount) {
+        const baseScore = active.reduce((sum, placement) => sum + placement.score, 0);
+        let pairwiseScore = 0;
+        let tightestMajorDelta = Infinity;
+
+        for (let i = 0; i < active.length; i += 1) {
+          for (let j = i + 1; j < active.length; j += 1) {
+            const p1 = active[i];
+            const p2 = active[j];
+            const du = Math.abs(p1.u - p2.u);
+            const dv = Math.abs(p1.v - p2.v);
+            const majorDelta = Math.max(du, dv);
+            const minorDelta = Math.min(du, dv);
+            pairwiseScore +=
+              majorDelta * 0.26
+              + (options.tightSpace ? (majorDelta - minorDelta) * 0.2 : minorDelta * 0.11)
+              + Math.min(p1.edgeMargin, p2.edgeMargin) * 0.1;
+            tightestMajorDelta = Math.min(tightestMajorDelta, majorDelta);
+          }
+        }
+
+        const uValues = active.map((placement) => placement.u);
+        const vValues = active.map((placement) => placement.v);
+        const uRange = Math.max(...uValues) - Math.min(...uValues);
+        const vRange = Math.max(...vValues) - Math.min(...vValues);
+        const spreadScore =
+          Math.max(uRange, vRange) * 0.34
+          + Math.min(uRange, vRange) * (options.tightSpace ? 0.06 : 0.17);
+        const directionBonus = options.dirAlignment * 0.6 - options.alongOverlap * 0.4;
+        const spacingBonus = (Number.isFinite(tightestMajorDelta) ? tightestMajorDelta : 0) * 0.18;
+        const comboScore = baseScore + pairwiseScore + spreadScore + spacingBonus + directionBonus;
+
+        if (!bestSet || comboScore > bestSet.score) {
+          bestSet = {
+            placements: [...active],
+            score: comboScore,
+          };
+        }
+        return;
+      }
+
+      const needed = requestedCount - active.length;
+      for (let i = startIndex; i <= pool.length - needed; i += 1) {
+        const candidate = pool[i];
+        let valid = true;
+        for (const selected of active) {
+          const du = Math.abs(candidate.u - selected.u);
+          const dv = Math.abs(candidate.v - selected.v);
+          const majorDelta = Math.max(du, dv);
+          if (majorDelta < minSpacing) {
+            valid = false;
+            break;
+          }
+        }
+        if (!valid) {
+          continue;
+        }
+        active.push(candidate);
+        recurse(i + 1);
+        active.pop();
+      }
+    };
+
+    recurse(0);
+    return bestSet;
+  };
+
+  const preferredMinSpacing = Math.max(
+    0.12,
+    options.targetSpacing * (options.tightSpace ? 0.45 : 0.55)
+  );
+  const strictBest = evaluateWithMinSpacing(preferredMinSpacing);
+  if (strictBest) {
+    return strictBest;
+  }
+
+  const relaxedMinSpacing = Math.max(0.1, preferredMinSpacing * 0.72);
+  return evaluateWithMinSpacing(relaxedMinSpacing);
+};
+
 interface AppState {
   parts: PartData[];
   pastParts: PartData[][];
   futureParts: PartData[][];
   selectedId: string | null;
   hoveredId: string | null;
+  lastDuplicatedId: string | null;
+  lastDuplicatedAt: number;
   tool: ToolType;
   explodeFactor: number;
   cameraFocusRequest: number;
@@ -615,11 +767,11 @@ interface AppState {
   removePart: (id: string) => void;
   selectPart: (id: string | null) => void;
   setHoveredId: (id: string | null) => void;
-  duplicatePart: (id: string, options?: { selectDuplicate?: boolean }) => void;
+  duplicatePart: (id: string, options?: { selectDuplicate?: boolean; offset?: [number, number, number] }) => void;
   attachPartToHinge: (partId: string, hingeId: string) => void;
   detachPartFromHinge: (partId: string) => void;
   setHingeAngle: (hingeId: string, angle: number) => void;
-  autoScrewParts: (firstId: string, secondId: string) => AutoScrewResult;
+  autoScrewParts: (firstId: string, secondId: string, requestedCount?: number) => AutoScrewResult;
   setTool: (tool: ToolType) => void;
   resetScene: () => void;
   setParts: (parts: PartData[]) => void;
@@ -651,6 +803,8 @@ export const useStore = create<AppState>((set) => ({
   futureParts: [],
   selectedId: null,
   hoveredId: null,
+  lastDuplicatedId: null,
+  lastDuplicatedAt: 0,
   tool: 'select',
   explodeFactor: 0,
   cameraFocusRequest: 0,
@@ -725,10 +879,15 @@ export const useStore = create<AppState>((set) => ({
     if (!partToDuplicate) return {};
 
     const shouldSelectDuplicate = options?.selectDuplicate ?? true;
+    const offset = options?.offset ?? [0, 0, 0];
     const newPart: PartData = {
       ...partToDuplicate,
       id: uuidv4(),
-      position: [...partToDuplicate.position] as [number, number, number],
+      position: [
+        partToDuplicate.position[0] + offset[0],
+        partToDuplicate.position[1] + offset[1],
+        partToDuplicate.position[2] + offset[2],
+      ],
       attachment: undefined,
       hinge: partToDuplicate.hardwareKind === 'hinge'
         ? {
@@ -745,6 +904,8 @@ export const useStore = create<AppState>((set) => ({
 
     return withHistory(state, [...state.parts, newPart], {
       selectedId: shouldSelectDuplicate ? newPart.id : state.selectedId,
+      lastDuplicatedId: newPart.id,
+      lastDuplicatedAt: Date.now(),
     });
   }),
 
@@ -816,7 +977,8 @@ export const useStore = create<AppState>((set) => ({
     return withHistory(state, parts);
   }),
 
-  autoScrewParts: (firstId, secondId) => {
+  autoScrewParts: (firstId, secondId, requestedCount = AUTO_SCREW_DEFAULT_COUNT) => {
+    const targetScrewCount = clampAutoScrewCount(requestedCount);
     let result: AutoScrewResult = {
       ok: false,
       message: 'Could not place screws for that pair.',
@@ -939,14 +1101,7 @@ export const useStore = create<AppState>((set) => ({
           const minOverlap = Math.min(overlapU, overlapV);
           const minEdgeClearance = Math.max(0.08, Math.min(0.32, minOverlap * 0.2));
 
-          const possiblePlacements: Array<{
-            center: THREE.Vector3;
-            preset: ScrewPreset;
-            score: number;
-            u: number;
-            v: number;
-            edgeMargin: number;
-          }> = [];
+          const possiblePlacements: AutoScrewPlacementCandidate[] = [];
 
           for (const uVal of uSamples) {
             for (const vVal of vSamples) {
@@ -1033,7 +1188,7 @@ export const useStore = create<AppState>((set) => ({
             }
           }
 
-          if (possiblePlacements.length < AUTO_SCREW_REQUIRED_COUNT) {
+          if (possiblePlacements.length < targetScrewCount) {
             continue;
           }
 
@@ -1042,46 +1197,68 @@ export const useStore = create<AppState>((set) => ({
           const targetSpacing = tightSpace
             ? Math.max(0.16, Math.min(0.8, maxOverlap * 0.26))
             : Math.max(0.3, Math.min(1.4, maxOverlap * 0.35));
-          let bestPair:
+          let selectedSet:
             | {
-                first: typeof possiblePlacements[number];
-                second: typeof possiblePlacements[number];
-                pairScore: number;
+                placements: AutoScrewPlacementCandidate[];
+                score: number;
               }
             | null = null;
+          if (targetScrewCount === AUTO_SCREW_DEFAULT_COUNT) {
+            let bestPair:
+              | {
+                  first: AutoScrewPlacementCandidate;
+                  second: AutoScrewPlacementCandidate;
+                  pairScore: number;
+                }
+              | null = null;
 
-          for (let i = 0; i < possiblePlacements.length; i += 1) {
-            for (let j = i + 1; j < possiblePlacements.length; j += 1) {
-              const p1 = possiblePlacements[i];
-              const p2 = possiblePlacements[j];
-              const du = Math.abs(p1.u - p2.u);
-              const dv = Math.abs(p1.v - p2.v);
-              const majorDelta = Math.max(du, dv);
-              const minorDelta = Math.min(du, dv);
-              if (majorDelta < targetSpacing) {
-                continue;
-              }
+            for (let i = 0; i < possiblePlacements.length; i += 1) {
+              for (let j = i + 1; j < possiblePlacements.length; j += 1) {
+                const p1 = possiblePlacements[i];
+                const p2 = possiblePlacements[j];
+                const du = Math.abs(p1.u - p2.u);
+                const dv = Math.abs(p1.v - p2.v);
+                const majorDelta = Math.max(du, dv);
+                const minorDelta = Math.min(du, dv);
+                if (majorDelta < targetSpacing) {
+                  continue;
+                }
 
-              const orientationBonus = tightSpace
-                ? (majorDelta - minorDelta) * 0.3 - minorDelta * 0.08
-                : minorDelta * 0.12;
-              const edgePairBonus = Math.min(p1.edgeMargin, p2.edgeMargin) * 0.12;
-              const directionBonus = dirAlignment * 0.6 - alongOverlap * 0.4;
-              const pairScore = p1.score + p2.score + majorDelta * 0.32 + orientationBonus + edgePairBonus + directionBonus;
-              if (!bestPair || pairScore > bestPair.pairScore) {
-                bestPair = { first: p1, second: p2, pairScore };
+                const orientationBonus = tightSpace
+                  ? (majorDelta - minorDelta) * 0.3 - minorDelta * 0.08
+                  : minorDelta * 0.12;
+                const edgePairBonus = Math.min(p1.edgeMargin, p2.edgeMargin) * 0.12;
+                const directionBonus = dirAlignment * 0.6 - alongOverlap * 0.4;
+                const pairScore = p1.score + p2.score + majorDelta * 0.32 + orientationBonus + edgePairBonus + directionBonus;
+                if (!bestPair || pairScore > bestPair.pairScore) {
+                  bestPair = { first: p1, second: p2, pairScore };
+                }
               }
             }
+
+            if (bestPair) {
+              selectedSet = {
+                placements: [bestPair.first, bestPair.second],
+                score: bestPair.pairScore,
+              };
+            }
+          } else {
+            selectedSet = chooseBestPlacementSet(possiblePlacements, targetScrewCount, {
+              targetSpacing,
+              tightSpace,
+              dirAlignment,
+              alongOverlap,
+            });
           }
 
-          if (!bestPair) {
+          if (!selectedSet) {
             continue;
           }
 
           const screwRotation = toEulerTuple(
             new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), basis.dir)
           );
-          const planScrews: PartData[] = [bestPair.first, bestPair.second].map((placement) => ({
+          const planScrews: PartData[] = selectedSet.placements.map((placement) => ({
             id: uuidv4(),
             name: placement.preset.name,
             type: 'hardware',
@@ -1092,12 +1269,12 @@ export const useStore = create<AppState>((set) => ({
             color: '#9ca3af',
           }));
 
-          if (!bestPlan || bestPair.pairScore > bestPlan.score) {
+          if (!bestPlan || selectedSet.score > bestPlan.score) {
             const preferredAxisBias = Math.max(
               ...firstFrame.axes.map((axis) => Math.abs(axis.dot(basis.dir)))
             );
             bestPlan = {
-              score: bestPair.pairScore + preferredAxisBias * 0.3,
+              score: selectedSet.score + preferredAxisBias * 0.3,
               screws: planScrews,
             };
           }
@@ -1125,7 +1302,7 @@ export const useStore = create<AppState>((set) => ({
 
         result = {
           ok: false,
-          message: 'Could not place 2 screws that intersect both selected pieces.',
+          message: `Could not place ${formatScrewCountLabel(targetScrewCount)} that intersect both selected pieces.`,
           screwCount: 0,
         };
         return {};
@@ -1183,8 +1360,8 @@ export const useStore = create<AppState>((set) => ({
 
       result = {
         ok: true,
-        message: 'Placed 2 screws.',
-        screwCount: 2,
+        message: `Placed ${formatScrewCountLabel(bestPlan.screws.length)}.`,
+        screwCount: bestPlan.screws.length,
       };
       return withHistory(state, [...state.parts, ...bestPlan.screws], {
         selectedId: secondId,
