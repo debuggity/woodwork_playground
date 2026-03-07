@@ -136,6 +136,7 @@ export const Scene: React.FC = () => {
     parts,
     selectPart,
     setHoveredId,
+    tool,
     floorEnabled,
     shadowsEnabled,
     structuralOverlayEnabled,
@@ -174,6 +175,10 @@ export const Scene: React.FC = () => {
   );
 
   const handleMissed = () => {
+    if (tool === 'saw') {
+      setHoveredId(null);
+      return;
+    }
     selectPart(null);
     setHoveredId(null);
   };

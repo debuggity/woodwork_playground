@@ -2011,7 +2011,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input
                     type="number"
-                    step="45"
+                    step="5"
                     value={toDegrees(selectedPart.rotation[0])}
                     onChange={(e) => updateRotation(0, e.target.value)}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
@@ -2030,7 +2030,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input
                     type="number"
-                    step="45"
+                    step="5"
                     value={toDegrees(selectedPart.rotation[1])}
                     onChange={(e) => updateRotation(1, e.target.value)}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
@@ -2049,7 +2049,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <input
                     type="number"
-                    step="45"
+                    step="5"
                     value={toDegrees(selectedPart.rotation[2])}
                     onChange={(e) => updateRotation(2, e.target.value)}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"

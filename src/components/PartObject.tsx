@@ -83,6 +83,67 @@ const centerGeometry = (geometry: THREE.BufferGeometry) => {
   return geometry;
 };
 
+const getFootprintPoints = (part: PartData): [number, number][] => {
+  const [width, , depth] = part.dimensions;
+  if (part.profile?.type === 'polygon' && part.profile.points && part.profile.points.length >= 3) {
+    return part.profile.points;
+  }
+  if (part.profile?.type === 'l-cut') {
+    const cutWidth = Math.max(0.125, Math.min(part.profile.cutWidth ?? width / 2, width - 0.125));
+    const cutDepth = Math.max(0.125, Math.min(part.profile.cutDepth ?? depth / 2, depth - 0.125));
+    return getLCutPoints(width, depth, cutWidth, cutDepth, part.profile.corner ?? 'front-left');
+  }
+  return [
+    [-width / 2, -depth / 2],
+    [width / 2, -depth / 2],
+    [width / 2, depth / 2],
+    [-width / 2, depth / 2],
+  ];
+};
+
+const projectPointToSegment = (point: [number, number], start: [number, number], end: [number, number]) => {
+  const dx = end[0] - start[0];
+  const dz = end[1] - start[1];
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= 1e-10) return start;
+  const t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dz) / lengthSq));
+  return [start[0] + dx * t, start[1] + dz * t] as [number, number];
+};
+
+const snapSawPoint = (
+  point: [number, number],
+  footprint: [number, number][],
+  threshold: number
+) => {
+  let bestPoint = point;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let boundary = false;
+
+  footprint.forEach((vertex, index) => {
+    const vertexDistance = Math.hypot(point[0] - vertex[0], point[1] - vertex[1]);
+    if (vertexDistance < bestDistance) {
+      bestDistance = vertexDistance;
+      bestPoint = vertex;
+      boundary = true;
+    }
+
+    const next = footprint[(index + 1) % footprint.length];
+    const projected = projectPointToSegment(point, vertex, next);
+    const edgeDistance = Math.hypot(point[0] - projected[0], point[1] - projected[1]);
+    if (edgeDistance < bestDistance) {
+      bestDistance = edgeDistance;
+      bestPoint = projected;
+      boundary = true;
+    }
+  });
+
+  if (bestDistance <= threshold) {
+    return { point: bestPoint, boundary };
+  }
+
+  return { point, boundary: false };
+};
+
 const clampCut = (value: number, maxValue: number) => {
   const minValue = Math.min(0.125, maxValue / 2);
   const maxCut = Math.max(minValue, maxValue - minValue);
@@ -356,8 +417,14 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const explodeFactor = useStore((state) => state.explodeFactor);
   const lastDuplicatedId = useStore((state) => state.lastDuplicatedId);
   const lastDuplicatedAt = useStore((state) => state.lastDuplicatedAt);
+  const sawPartId = useStore((state) => state.sawPartId);
+  const sawPath = useStore((state) => state.sawPath);
+  const sawPreviewPoint = useStore((state) => state.sawPreviewPoint);
   const selectPart = useStore((state) => state.selectPart);
   const setHoveredId = useStore((state) => state.setHoveredId);
+  const setSawDraftPart = useStore((state) => state.setSawDraftPart);
+  const addSawPoint = useStore((state) => state.addSawPoint);
+  const setSawPreviewPoint = useStore((state) => state.setSawPreviewPoint);
   const updatePart = useStore((state) => state.updatePart);
 
   const explodeGroupRef = useRef<THREE.Group>(null);
@@ -371,6 +438,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
     meshRef.current = node;
     setTransformObject(node);
   }, []);
+  const footprintPoints = useMemo(() => getFootprintPoints(data), [data]);
+  const position = useMemo(() => new THREE.Vector3(...data.position), [data.position]);
+  const rotation = useMemo(() => new THREE.Euler(...data.rotation), [data.rotation]);
+  const [width, height, depth] = data.dimensions;
+  const sawSnapDistance = Math.max(Math.min(width, depth) * 0.025, 0.22);
 
   const shouldIgnoreSelection = (button?: number) => {
     if (button !== undefined && button !== 0) {
@@ -379,8 +451,34 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
     return Date.now() < suppressSelectionUntil;
   };
 
+  const getSawLocalPoint = useCallback((worldPoint: THREE.Vector3) => {
+    if (!meshRef.current) return null;
+    const localPoint = meshRef.current.worldToLocal(worldPoint.clone());
+    const faceTolerance = Math.max(0.08, height * 0.2);
+    if (Math.abs(Math.abs(localPoint.y) - height / 2) > faceTolerance) {
+      return null;
+    }
+    return [localPoint.x, localPoint.z] as [number, number];
+  }, [height]);
+
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
+    if (tool === 'saw' && data.type !== 'hardware') {
+      selectPart(data.id);
+      setSawDraftPart(data.id);
+
+      const localPoint = getSawLocalPoint(e.point);
+      if (!localPoint) return;
+
+      const snapped = snapSawPoint(localPoint, footprintPoints, sawSnapDistance);
+      const startingNewPath = sawPartId !== data.id || sawPath.length === 0;
+      if (startingNewPath && !snapped.boundary) {
+        return;
+      }
+
+      addSawPoint(snapped.point);
+      return;
+    }
     if (shouldIgnoreSelection(e.button)) {
       return;
     }
@@ -415,9 +513,23 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
     setHoveredId(null);
   };
 
-  const position = useMemo(() => new THREE.Vector3(...data.position), [data.position]);
-  const rotation = useMemo(() => new THREE.Euler(...data.rotation), [data.rotation]);
-  const [width, height, depth] = data.dimensions;
+  const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
+    if (tool !== 'saw' || data.type === 'hardware' || sawPartId !== data.id) return;
+    e.stopPropagation();
+    const localPoint = getSawLocalPoint(e.point);
+    if (!localPoint) {
+      setSawPreviewPoint(null);
+      return;
+    }
+    const snapped = snapSawPoint(localPoint, footprintPoints, sawSnapDistance);
+    setSawPreviewPoint(snapped.point);
+  };
+
+  const handleSawPointerLeave = (e: ThreeEvent<PointerEvent>) => {
+    if (tool !== 'saw' || sawPartId !== data.id) return;
+    e.stopPropagation();
+    setSawPreviewPoint(null);
+  };
   const structuralHeatColor = useMemo(() => {
     if (!structuralOverlayEnabled || data.type === 'hardware' || structuralScore === null) return null;
     return getStructuralHeatColor(structuralScore);
@@ -526,7 +638,8 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
         curveSegments: 1,
       });
 
-      extruded.rotateX(-Math.PI / 2);
+      // Keep polygon footprint orientation aligned with box/local coordinates.
+      extruded.rotateX(Math.PI / 2);
       return centerGeometry(extruded);
     }
 
@@ -849,11 +962,26 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       : '#8d6e63';
   const hardwareHitRadius = Math.max(width * 3, 0.45);
   const hardwareHitHeight = Math.max(height + 0.75, 2.5);
+  const activeSawPoints = sawPartId === data.id
+    ? (sawPreviewPoint ? [...sawPath, sawPreviewPoint] : sawPath)
+    : [];
+  const sawPathGeometry = useMemo(() => {
+    if (activeSawPoints.length < 2) return null;
+    return new THREE.BufferGeometry().setFromPoints(
+      activeSawPoints.map(([x, z]) => new THREE.Vector3(x, height / 2 + 0.04, z))
+    );
+  }, [activeSawPoints, height]);
 
   useEffect(() => {
     if (!materialRef.current) return;
     materialRef.current.color.set(fillColor);
   }, [fillColor]);
+
+  useEffect(() => {
+    return () => {
+      sawPathGeometry?.dispose();
+    };
+  }, [sawPathGeometry]);
 
   useEffect(() => {
     if (!showTransform) {
@@ -901,8 +1029,12 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
           position={position}
           rotation={rotation}
           onClick={data.type === 'hardware' ? undefined : handleClick}
+          onPointerMove={handlePointerMove}
           onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
+          onPointerLeave={(event) => {
+            handlePointerLeave(event);
+            handleSawPointerLeave(event);
+          }}
           castShadow
           receiveShadow
         >
@@ -961,6 +1093,18 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
               <lineBasicMaterial color={strokeColor} />
             </lineSegments>
           )}
+          {data.type !== 'hardware' && sawPathGeometry && sawPartId === data.id && (
+            <line renderOrder={6} raycast={() => null}>
+              <primitive object={sawPathGeometry} attach="geometry" />
+              <lineBasicMaterial color="#0ea5e9" />
+            </line>
+          )}
+          {data.type !== 'hardware' && sawPartId === data.id && sawPath.map(([x, z], index) => (
+            <mesh key={`saw-point-${index}`} position={[x, height / 2 + 0.045, z]} raycast={() => null} renderOrder={7}>
+              <sphereGeometry args={[0.08, 10, 10]} />
+              <meshBasicMaterial color={index === 0 ? '#f97316' : '#0284c7'} depthWrite={false} />
+            </mesh>
+          ))}
         </mesh>
         {data.type !== 'hardware' && structuralOverlayEnabled && heatOverlayGeometry && (
           <mesh
@@ -993,7 +1137,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
           onMouseUp={onTransformEnd}
           onObjectChange={onTransformObjectChange}
           translationSnap={snapEnabled ? 0.125 : undefined}
-          rotationSnap={snapEnabled ? Math.PI / 8 : undefined}
+          rotationSnap={snapEnabled ? Math.PI / 12 : undefined}
         />
       )}
     </>

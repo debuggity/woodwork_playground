@@ -315,6 +315,195 @@ const pointInPolygonOrOnEdge2d = (x: number, z: number, points: [number, number]
   return inside;
 };
 
+const SAW_PATH_EPS = 0.02;
+
+const pointsClose2d = (a: [number, number], b: [number, number], epsilon = SAW_PATH_EPS) =>
+  Math.hypot(a[0] - b[0], a[1] - b[1]) <= epsilon;
+
+const signedPolygonArea2d = (points: [number, number][]) => {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const [x1, z1] = points[i];
+    const [x2, z2] = points[(i + 1) % points.length];
+    area += x1 * z2 - x2 * z1;
+  }
+  return area / 2;
+};
+
+const simplifyPolygon2d = (points: [number, number][], epsilon = SAW_PATH_EPS) => {
+  if (points.length < 3) return points;
+
+  const deduped = points.filter((point, index) => {
+    const prev = points[(index - 1 + points.length) % points.length];
+    return !pointsClose2d(point, prev, epsilon);
+  });
+
+  if (deduped.length < 3) return deduped;
+
+  return deduped.filter((point, index) => {
+    const prev = deduped[(index - 1 + deduped.length) % deduped.length];
+    const next = deduped[(index + 1) % deduped.length];
+    const v1x = point[0] - prev[0];
+    const v1z = point[1] - prev[1];
+    const v2x = next[0] - point[0];
+    const v2z = next[1] - point[1];
+    const cross = v1x * v2z - v1z * v2x;
+    return Math.abs(cross) > epsilon;
+  });
+};
+
+const normalizePolygon2d = (points: [number, number][]) => {
+  const simplified = simplifyPolygon2d(points);
+  if (simplified.length < 3) return simplified;
+  return signedPolygonArea2d(simplified) < 0 ? [...simplified].reverse() : simplified;
+};
+
+const insertPointOnPolygonBoundary = (
+  polygon: [number, number][],
+  point: [number, number],
+  epsilon = SAW_PATH_EPS
+) => {
+  const existingIndex = polygon.findIndex((candidate) => pointsClose2d(candidate, point, epsilon));
+  if (existingIndex >= 0) {
+    const next = [...polygon];
+    next[existingIndex] = point;
+    return { points: next, index: existingIndex };
+  }
+
+  for (let i = 0; i < polygon.length; i += 1) {
+    const nextIndex = (i + 1) % polygon.length;
+    if (isPointOnSegment2d(point, polygon[i], polygon[nextIndex])) {
+      const next = [...polygon];
+      next.splice(nextIndex, 0, point);
+      return { points: next, index: nextIndex };
+    }
+  }
+
+  return null;
+};
+
+const collectBoundaryChain = (polygon: [number, number][], startIndex: number, endIndex: number) => {
+  const chain: [number, number][] = [polygon[startIndex]];
+  let index = startIndex;
+  while (index !== endIndex) {
+    index = (index + 1) % polygon.length;
+    chain.push(polygon[index]);
+    if (chain.length > polygon.length + 2) break;
+  }
+  return chain;
+};
+
+const isSawPathValid = (polygon: [number, number][], path: [number, number][]) => {
+  if (path.length < 2) return false;
+  for (let i = 0; i < path.length; i += 1) {
+    const point = path[i];
+    if (!pointInPolygonOrOnEdge2d(point[0], point[1], polygon)) {
+      return false;
+    }
+    if (i > 0 && pointsClose2d(point, path[i - 1], SAW_PATH_EPS)) {
+      return false;
+    }
+  }
+
+  const start = path[0];
+  const end = path[path.length - 1];
+  const startOnBoundary = polygon.some((point, index) =>
+    isPointOnSegment2d(start, point, polygon[(index + 1) % polygon.length])
+  );
+  const endOnBoundary = polygon.some((point, index) =>
+    isPointOnSegment2d(end, point, polygon[(index + 1) % polygon.length])
+  );
+
+  if (!startOnBoundary || !endOnBoundary || pointsClose2d(start, end, SAW_PATH_EPS)) {
+    return false;
+  }
+
+  for (let i = 1; i < path.length; i += 1) {
+    const mid: [number, number] = [
+      (path[i - 1][0] + path[i][0]) / 2,
+      (path[i - 1][1] + path[i][1]) / 2,
+    ];
+    if (!pointInPolygonOrOnEdge2d(mid[0], mid[1], polygon)) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const splitPolygonWithSawPath = (polygonInput: [number, number][], pathInput: [number, number][]) => {
+  const polygon = normalizePolygon2d(polygonInput);
+  const path = pathInput.slice();
+  if (!isSawPathValid(polygon, path)) return null;
+
+  const startInsert = insertPointOnPolygonBoundary(polygon, path[0]);
+  if (!startInsert) return null;
+  const endInsert = insertPointOnPolygonBoundary(startInsert.points, path[path.length - 1]);
+  if (!endInsert) return null;
+  const startIndex = endInsert.points.findIndex((point) => pointsClose2d(point, path[0]));
+  const endIndex = endInsert.points.findIndex((point) => pointsClose2d(point, path[path.length - 1]));
+  if (startIndex < 0 || endIndex < 0 || startIndex === endIndex) return null;
+
+  const boundaryForward = collectBoundaryChain(endInsert.points, startIndex, endIndex);
+  const boundaryBackward = collectBoundaryChain(endInsert.points, endIndex, startIndex);
+  const reversedPath = [...path].reverse();
+
+  const first = normalizePolygon2d([
+    ...path,
+    ...boundaryBackward.slice(1, -1),
+  ]);
+  const second = normalizePolygon2d([
+    ...reversedPath,
+    ...boundaryForward.slice(1, -1),
+  ]);
+
+  if (first.length < 3 || second.length < 3) return null;
+  if (Math.abs(signedPolygonArea2d(first)) <= SAW_PATH_EPS || Math.abs(signedPolygonArea2d(second)) <= SAW_PATH_EPS) {
+    return null;
+  }
+
+  return [first, second] as const;
+};
+
+const createPartFromFootprint = (
+  source: PartData,
+  footprint: [number, number][],
+  name: string
+): PartData | null => {
+  const polygon = normalizePolygon2d(footprint);
+  if (polygon.length < 3) return null;
+
+  const xs = polygon.map(([x]) => x);
+  const zs = polygon.map(([, z]) => z);
+  const xmin = Math.min(...xs);
+  const xmax = Math.max(...xs);
+  const zmin = Math.min(...zs);
+  const zmax = Math.max(...zs);
+  const width = xmax - xmin;
+  const depth = zmax - zmin;
+  if (width <= SAW_PATH_EPS || depth <= SAW_PATH_EPS) return null;
+
+  const centerX = (xmin + xmax) / 2;
+  const centerZ = (zmin + zmax) / 2;
+  const frame = buildOrientedFrame(source);
+  const worldCenter = frame.center.clone()
+    .add(frame.axes[0].clone().multiplyScalar(centerX))
+    .add(frame.axes[2].clone().multiplyScalar(centerZ));
+
+  return {
+    ...source,
+    id: uuidv4(),
+    name,
+    dimensions: [width, source.dimensions[1], depth],
+    position: [worldCenter.x, worldCenter.y, worldCenter.z],
+    profile: {
+      type: 'polygon',
+      points: polygon.map(([x, z]) => [x - centerX, z - centerZ] as [number, number]),
+    },
+    attachment: undefined,
+  };
+};
+
 const estimateScrewPenetrationLength = (
   frame: OrientedFrame,
   footprint: [number, number][],
@@ -755,6 +944,9 @@ interface AppState {
   lastDuplicatedId: string | null;
   lastDuplicatedAt: number;
   tool: ToolType;
+  sawPartId: string | null;
+  sawPath: [number, number][];
+  sawPreviewPoint: [number, number] | null;
   explodeFactor: number;
   cameraFocusRequest: number;
   
@@ -772,6 +964,11 @@ interface AppState {
   detachPartFromHinge: (partId: string) => void;
   setHingeAngle: (hingeId: string, angle: number) => void;
   autoScrewParts: (firstId: string, secondId: string, requestedCount?: number) => AutoScrewResult;
+  setSawDraftPart: (partId: string | null) => void;
+  addSawPoint: (point: [number, number]) => void;
+  setSawPreviewPoint: (point: [number, number] | null) => void;
+  clearSawPath: () => void;
+  commitSawCut: () => { ok: boolean; message: string };
   setTool: (tool: ToolType) => void;
   resetScene: () => void;
   setParts: (parts: PartData[]) => void;
@@ -806,6 +1003,9 @@ export const useStore = create<AppState>((set) => ({
   lastDuplicatedId: null,
   lastDuplicatedAt: 0,
   tool: 'select',
+  sawPartId: null,
+  sawPath: [],
+  sawPreviewPoint: null,
   explodeFactor: 0,
   cameraFocusRequest: 0,
   snapEnabled: true, // Default to true for easier alignment
@@ -867,10 +1067,18 @@ export const useStore = create<AppState>((set) => ({
     return withHistory(state, parts, {
       selectedId: state.selectedId === id ? null : state.selectedId,
       hoveredId: state.hoveredId === id ? null : state.hoveredId,
+      sawPartId: state.sawPartId === id ? null : state.sawPartId,
+      sawPath: state.sawPartId === id ? [] : state.sawPath,
+      sawPreviewPoint: state.sawPartId === id ? null : state.sawPreviewPoint,
     });
   }),
 
-  selectPart: (id) => set({ selectedId: id }),
+  selectPart: (id) => set((state) => ({
+    selectedId: id,
+    ...(state.tool === 'saw' && state.sawPartId !== id
+      ? { sawPartId: id, sawPath: [], sawPreviewPoint: null }
+      : {}),
+  })),
 
   setHoveredId: (id) => set({ hoveredId: id }),
 
@@ -1371,12 +1579,101 @@ export const useStore = create<AppState>((set) => ({
     return result;
   },
 
-  setTool: (tool) => set({ tool }),
+  setSawDraftPart: (partId) => set((state) => ({
+    sawPartId: partId,
+    sawPath: state.sawPartId === partId ? state.sawPath : [],
+    sawPreviewPoint: null,
+    selectedId: partId ?? state.selectedId,
+  })),
+
+  addSawPoint: (point) => set((state) => {
+    if (!state.sawPartId) {
+      return {};
+    }
+    const nextPath = state.sawPath.length > 0 && pointsClose2d(state.sawPath[state.sawPath.length - 1], point)
+      ? state.sawPath
+      : [...state.sawPath, point];
+    return {
+      sawPath: nextPath,
+      sawPreviewPoint: null,
+    };
+  }),
+
+  setSawPreviewPoint: (point) => set({ sawPreviewPoint: point }),
+
+  clearSawPath: () => set({
+    sawPartId: null,
+    sawPath: [],
+    sawPreviewPoint: null,
+  }),
+
+  commitSawCut: () => {
+    let result = { ok: false, message: 'Saw path is not ready.' };
+
+    set((state) => {
+      if (!state.sawPartId) {
+        result = { ok: false, message: 'Select a wood or sheet part first.' };
+        return {};
+      }
+
+      const source = state.parts.find((part) => part.id === state.sawPartId);
+      if (!source || source.type === 'hardware') {
+        result = { ok: false, message: 'Saw only works on wood or sheet parts.' };
+        return {};
+      }
+
+      const split = splitPolygonWithSawPath(getPartFootprintPoints(source), state.sawPath);
+      if (!split) {
+        result = {
+          ok: false,
+          message: 'Saw path must start and end on the edge and stay inside the selected face.',
+        };
+        return {};
+      }
+
+      const first = createPartFromFootprint(source, split[0], `${source.name} A`);
+      const second = createPartFromFootprint(source, split[1], `${source.name} B`);
+      if (!first || !second) {
+        result = { ok: false, message: 'Could not split that part with the current saw path.' };
+        return {};
+      }
+
+      const nextParts = state.parts.flatMap((part) => {
+        if (part.id !== source.id) return [part];
+        return [first, second];
+      });
+
+      result = { ok: true, message: 'Split part into two pieces.' };
+      return withHistory(state, nextParts, {
+        selectedId: first.id,
+        sawPartId: null,
+        sawPath: [],
+        sawPreviewPoint: null,
+      });
+    });
+
+    return result;
+  },
+
+  setTool: (tool) => set((state) => ({
+    tool,
+    sawPreviewPoint: null,
+    ...(tool === 'saw'
+      ? {}
+      : {
+          sawPartId: null,
+          sawPath: [],
+        }),
+    hoveredId: tool === 'auto-screw' || tool === 'select' ? state.hoveredId : null,
+  })),
 
   resetScene: () => set((state) =>
     withHistory(state, [], {
       selectedId: null,
       hoveredId: null,
+      sawPartId: null,
+      sawPath: [],
+      sawPreviewPoint: null,
       explodeFactor: 0,
       cameraFocusRequest: 0,
     })
@@ -1386,6 +1683,9 @@ export const useStore = create<AppState>((set) => ({
     withHistory(state, rebuildAllAttachments(parts), {
       selectedId: null,
       hoveredId: null,
+      sawPartId: null,
+      sawPath: [],
+      sawPreviewPoint: null,
     })
   ),
 
