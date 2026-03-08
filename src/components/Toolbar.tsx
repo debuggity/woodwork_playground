@@ -13,6 +13,12 @@ const sanitizeFilename = (value: string) => {
   return normalized.endsWith('.json') ? normalized : `${normalized}.json`;
 };
 
+const formatInches = (value: number) => {
+  const rounded = Math.round(value * 100) / 100;
+  const text = rounded.toFixed(2);
+  return text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+};
+
 type Point2 = [number, number];
 type FootprintBounds = { xmin: number; xmax: number; zmin: number; zmax: number };
 type BoundarySegment = { start: Point2; end: Point2 };
@@ -878,7 +884,9 @@ export const Toolbar: React.FC = () => {
     setExplodeFactor,
     autoScrewParts,
     sawPartId,
+    sawFace,
     sawPath,
+    sawPreviewPoint,
     clearSawPath,
     commitSawCut,
     selectPart,
@@ -898,6 +906,16 @@ export const Toolbar: React.FC = () => {
   const autoScrewLastHandledSelectionRef = useRef<string | null>(null);
   const selectedPart = parts.find((part) => part.id === selectedId);
   const sawDraftPart = sawPartId ? parts.find((part) => part.id === sawPartId) : null;
+  const sawCurrentSegment = useMemo(() => {
+    if (sawPath.length === 0 || !sawPreviewPoint) return null;
+    const last = sawPath[sawPath.length - 1];
+    const dx = sawPreviewPoint[0] - last[0];
+    const dy = sawPreviewPoint[1] - last[1];
+    const length = Math.hypot(dx, dy);
+    if (length <= 1e-6) return null;
+    const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    return { length, angle };
+  }, [sawPath, sawPreviewPoint]);
   const autoScrewFirstPart = autoScrewFirstId ? parts.find((part) => part.id === autoScrewFirstId) : null;
   const canUndo = pastParts.length > 0;
   const canRedo = futureParts.length > 0;
@@ -1051,6 +1069,11 @@ export const Toolbar: React.FC = () => {
     if (!result.ok) {
       alert(result.message);
     }
+  };
+
+  const handleExitSaw = () => {
+    clearSawPath();
+    setTool('select');
   };
 
   const handleActivateAutoScrew = () => {
@@ -1775,14 +1798,32 @@ export const Toolbar: React.FC = () => {
               <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Saw Mode</div>
               <div className="mt-0.5 text-[10px] text-slate-700">
                 {sawDraftPart
-                  ? `Selected: ${sawDraftPart.name}. Click the top face to place a cut path. Start and end on the edge, then split the piece.`
-                  : 'Select a wood or sheet part, then click its top face to start a cut path.'}
+                  ? `Selected: ${sawDraftPart.name}. Hover to preview the next point, click to place segments, and finish on an edge to split.`
+                  : 'Select a wood or sheet part, then hover a face to preview the first point.'}
               </div>
               <div className="mt-1 text-[11px] text-slate-600">
                 Points: {sawPath.length}
               </div>
+              {sawFace && (
+                <div className="mt-0.5 text-[11px] text-slate-600">
+                  Face: {sawFace.plane === 'xz' ? 'Top/Bottom' : sawFace.plane === 'xy' ? 'Front/Back' : 'Left/Right'}
+                </div>
+              )}
+              {sawCurrentSegment && (
+                <div className="mt-0.5 text-[11px] text-slate-700">
+                  Current cut: {formatInches(sawCurrentSegment.length)}" at {Math.round(sawCurrentSegment.angle)}°
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={handleExitSaw}
+                className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] text-red-700 hover:bg-red-100 transition-colors"
+                title="Exit Saw Mode"
+              >
+                <X size={12} />
+                Exit
+              </button>
               <button
                 onClick={clearSawPath}
                 className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 transition-colors"

@@ -27,6 +27,13 @@ export interface HingeAttachment {
   localRotation: [number, number, number];
 }
 
+export type SawPlane = 'xz' | 'xy' | 'zy';
+
+export interface SawFaceState {
+  plane: SawPlane;
+  normalSign: -1 | 1;
+}
+
 export interface PartData {
   id: string;
   name: string;

@@ -3,7 +3,7 @@ import { ThreeEvent, useFrame, useThree } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '../store';
-import { CutCorner, PartData } from '../types';
+import { CutCorner, PartData, SawFaceState, SawPlane } from '../types';
 import { getStructuralHeatColor, StructuralPartField } from '../structuralAnalysis';
 
 interface PartObjectProps {
@@ -113,7 +113,8 @@ const projectPointToSegment = (point: [number, number], start: [number, number],
 const snapSawPoint = (
   point: [number, number],
   footprint: [number, number][],
-  threshold: number
+  threshold: number,
+  anchors: [number, number][] = []
 ) => {
   let bestPoint = point;
   let bestDistance = Number.POSITIVE_INFINITY;
@@ -137,11 +138,137 @@ const snapSawPoint = (
     }
   });
 
+  anchors.forEach((anchor) => {
+    const anchorDistance = Math.hypot(point[0] - anchor[0], point[1] - anchor[1]);
+    if (anchorDistance < bestDistance) {
+      bestDistance = anchorDistance;
+      bestPoint = anchor;
+      boundary = false;
+    }
+  });
+
   if (bestDistance <= threshold) {
     return { point: bestPoint, boundary };
   }
 
   return { point, boundary: false };
+};
+
+type SawFaceHit = {
+  face: SawFaceState;
+  point: [number, number];
+  boundary: [number, number][];
+  previewPosition: [number, number, number];
+};
+
+const getRectBoundary = (halfU: number, halfV: number): [number, number][] => ([
+  [-halfU, -halfV],
+  [halfU, -halfV],
+  [halfU, halfV],
+  [-halfU, halfV],
+]);
+
+const getSawFaceHit = (
+  part: PartData,
+  localPoint: THREE.Vector3,
+  footprint: [number, number][]
+): SawFaceHit | null => {
+  const [width, height, depth] = part.dimensions;
+  const distances = {
+    x: width / 2 - Math.abs(localPoint.x),
+    y: height / 2 - Math.abs(localPoint.y),
+    z: depth / 2 - Math.abs(localPoint.z),
+  };
+
+  const allowSideFaces = part.type === 'lumber' && (!part.profile || part.profile.type === 'rect');
+  const axis = allowSideFaces
+    ? (Object.entries(distances).sort((a, b) => a[1] - b[1])[0]?.[0] as 'x' | 'y' | 'z')
+    : 'y';
+
+  if (axis === 'y') {
+    return {
+      face: { plane: 'xz', normalSign: localPoint.y >= 0 ? 1 : -1 },
+      point: [localPoint.x, localPoint.z],
+      boundary: footprint,
+      previewPosition: [localPoint.x, Math.sign(localPoint.y || 1) * (height / 2 + 0.04), localPoint.z],
+    };
+  }
+
+  if (axis === 'z') {
+    return {
+      face: { plane: 'xy', normalSign: localPoint.z >= 0 ? 1 : -1 },
+      point: [localPoint.x, localPoint.y],
+      boundary: getRectBoundary(width / 2, height / 2),
+      previewPosition: [localPoint.x, localPoint.y, Math.sign(localPoint.z || 1) * (depth / 2 + 0.04)],
+    };
+  }
+
+  return {
+    face: { plane: 'zy', normalSign: localPoint.x >= 0 ? 1 : -1 },
+    point: [localPoint.z, localPoint.y],
+    boundary: getRectBoundary(depth / 2, height / 2),
+    previewPosition: [Math.sign(localPoint.x || 1) * (width / 2 + 0.04), localPoint.y, localPoint.z],
+  };
+};
+
+const angleSnapDegrees = [0, 45, 90, 135, 180, -45, -90, -135] as const;
+const SAW_ANGLE_SNAP_TOLERANCE_DEG = 0.35;
+
+const snapSawSegment = (
+  previousPoint: [number, number] | null,
+  candidate: [number, number],
+  threshold: number
+) => {
+  if (!previousPoint) {
+    return { point: candidate, snappedAngleDeg: null as number | null, length: 0 };
+  }
+
+  const dx = candidate[0] - previousPoint[0];
+  const dy = candidate[1] - previousPoint[1];
+  const length = Math.hypot(dx, dy);
+  if (length <= 1e-6) {
+    return { point: candidate, snappedAngleDeg: null as number | null, length: 0 };
+  }
+
+  const rawAngle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  let bestAngle = rawAngle;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  angleSnapDegrees.forEach((angle) => {
+    const delta = Math.abs((((rawAngle - angle) % 360) + 540) % 360 - 180);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestAngle = angle;
+    }
+  });
+
+  if (bestDelta > SAW_ANGLE_SNAP_TOLERANCE_DEG) {
+    return { point: candidate, snappedAngleDeg: null as number | null, length };
+  }
+
+  const snappedRad = (bestAngle * Math.PI) / 180;
+  return {
+    point: [
+      previousPoint[0] + Math.cos(snappedRad) * length,
+      previousPoint[1] + Math.sin(snappedRad) * length,
+    ] as [number, number],
+    snappedAngleDeg: ((bestAngle % 360) + 360) % 360,
+    length,
+  };
+};
+
+const sawPointToLocal3d = (
+  point: [number, number],
+  face: SawFaceState,
+  dimensions: [number, number, number]
+) => {
+  const [width, height, depth] = dimensions;
+  if (face.plane === 'xz') {
+    return new THREE.Vector3(point[0], face.normalSign * (height / 2 + 0.04), point[1]);
+  }
+  if (face.plane === 'xy') {
+    return new THREE.Vector3(point[0], point[1], face.normalSign * (depth / 2 + 0.04));
+  }
+  return new THREE.Vector3(face.normalSign * (width / 2 + 0.04), point[1], point[0]);
 };
 
 const clampCut = (value: number, maxValue: number) => {
@@ -418,6 +545,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const lastDuplicatedId = useStore((state) => state.lastDuplicatedId);
   const lastDuplicatedAt = useStore((state) => state.lastDuplicatedAt);
   const sawPartId = useStore((state) => state.sawPartId);
+  const sawFace = useStore((state) => state.sawFace);
   const sawPath = useStore((state) => state.sawPath);
   const sawPreviewPoint = useStore((state) => state.sawPreviewPoint);
   const selectPart = useStore((state) => state.selectPart);
@@ -430,6 +558,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const explodeGroupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const [transformObject, setTransformObject] = useState<THREE.Object3D | null>(null);
+  const [hoverSawHit, setHoverSawHit] = useState<SawFaceHit | null>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const transformStartRef = useRef<{ position: THREE.Vector3; rotation: THREE.Euler } | null>(null);
   const isTransformingRef = useRef(false);
@@ -451,27 +580,39 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
     return Date.now() < suppressSelectionUntil;
   };
 
-  const getSawLocalPoint = useCallback((worldPoint: THREE.Vector3) => {
+  const getSawHit = useCallback((worldPoint: THREE.Vector3) => {
     if (!meshRef.current) return null;
     const localPoint = meshRef.current.worldToLocal(worldPoint.clone());
-    const faceTolerance = Math.max(0.08, height * 0.2);
-    if (Math.abs(Math.abs(localPoint.y) - height / 2) > faceTolerance) {
-      return null;
-    }
-    return [localPoint.x, localPoint.z] as [number, number];
-  }, [height]);
+    return getSawFaceHit(data, localPoint, footprintPoints);
+  }, [data, footprintPoints]);
 
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     if (tool === 'saw' && data.type !== 'hardware') {
       selectPart(data.id);
-      setSawDraftPart(data.id);
+      const hit = hoverSawHit ?? getSawHit(e.point);
+      if (!hit) {
+        setSawDraftPart(data.id, null);
+        return;
+      }
 
-      const localPoint = getSawLocalPoint(e.point);
-      if (!localPoint) return;
-
-      const snapped = snapSawPoint(localPoint, footprintPoints, sawSnapDistance);
       const startingNewPath = sawPartId !== data.id || sawPath.length === 0;
+      const activeFace = startingNewPath ? hit.face : sawFace;
+      if (!activeFace || activeFace.plane !== hit.face.plane || activeFace.normalSign !== hit.face.normalSign) {
+        if (!startingNewPath) {
+          return;
+        }
+      }
+
+      if (startingNewPath) {
+        setSawDraftPart(data.id, hit.face);
+      }
+
+      let snapped = snapSawPoint(hit.point, hit.boundary, sawSnapDistance, sawPath);
+      if (!startingNewPath && sawPath.length > 0) {
+        const segmentSnap = snapSawSegment(sawPath[sawPath.length - 1], snapped.point, sawSnapDistance);
+        snapped = snapSawPoint(segmentSnap.point, hit.boundary, sawSnapDistance, sawPath);
+      }
       if (startingNewPath && !snapped.boundary) {
         return;
       }
@@ -514,20 +655,41 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
-    if (tool !== 'saw' || data.type === 'hardware' || sawPartId !== data.id) return;
+    if (tool !== 'saw' || data.type === 'hardware') return;
     e.stopPropagation();
-    const localPoint = getSawLocalPoint(e.point);
-    if (!localPoint) {
+    const hit = getSawHit(e.point);
+    const canPreviewInitialPoint = sawPath.length === 0 && (sawPartId === null || sawPartId === data.id || isSelected);
+    const isActiveDraftFace = sawPartId === data.id && sawFace
+      && hit
+      && sawFace.plane === hit.face.plane
+      && sawFace.normalSign === hit.face.normalSign;
+
+    if (!hit || (!canPreviewInitialPoint && !isActiveDraftFace)) {
+      setHoverSawHit(null);
       setSawPreviewPoint(null);
       return;
     }
-    const snapped = snapSawPoint(localPoint, footprintPoints, sawSnapDistance);
-    setSawPreviewPoint(snapped.point);
+
+    let snapped = snapSawPoint(hit.point, hit.boundary, sawSnapDistance, sawPath);
+    if (sawPath.length > 0 && sawPartId === data.id && isActiveDraftFace) {
+      const segmentSnap = snapSawSegment(sawPath[sawPath.length - 1], snapped.point, sawSnapDistance);
+      snapped = snapSawPoint(segmentSnap.point, hit.boundary, sawSnapDistance, sawPath);
+    }
+
+    setHoverSawHit({
+      ...hit,
+      point: snapped.point,
+    });
+
+    if (sawPartId === data.id && (sawPath.length > 0 || sawFace)) {
+      setSawPreviewPoint(snapped.point);
+    }
   };
 
   const handleSawPointerLeave = (e: ThreeEvent<PointerEvent>) => {
-    if (tool !== 'saw' || sawPartId !== data.id) return;
+    if (tool !== 'saw') return;
     e.stopPropagation();
+    setHoverSawHit(null);
     setSawPreviewPoint(null);
   };
   const structuralHeatColor = useMemo(() => {
@@ -962,15 +1124,22 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       : '#8d6e63';
   const hardwareHitRadius = Math.max(width * 3, 0.45);
   const hardwareHitHeight = Math.max(height + 0.75, 2.5);
-  const activeSawPoints = sawPartId === data.id
+  const activeSawFace = sawPartId === data.id ? sawFace : null;
+  const activeSawPoints = sawPartId === data.id && activeSawFace
     ? (sawPreviewPoint ? [...sawPath, sawPreviewPoint] : sawPath)
     : [];
+  const hoverOnlyPreviewPosition = tool === 'saw'
+    && sawPath.length === 0
+    && hoverSawHit
+    && (sawPartId === null || sawPartId === data.id || isSelected)
+    ? new THREE.Vector3(...hoverSawHit.previewPosition)
+    : null;
   const sawPathGeometry = useMemo(() => {
-    if (activeSawPoints.length < 2) return null;
+    if (activeSawPoints.length < 2 || !activeSawFace) return null;
     return new THREE.BufferGeometry().setFromPoints(
-      activeSawPoints.map(([x, z]) => new THREE.Vector3(x, height / 2 + 0.04, z))
+      activeSawPoints.map((point) => sawPointToLocal3d(point, activeSawFace, data.dimensions))
     );
-  }, [activeSawPoints, height]);
+  }, [activeSawFace, activeSawPoints, data.dimensions, height]);
 
   useEffect(() => {
     if (!materialRef.current) return;
@@ -1093,18 +1262,29 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
               <lineBasicMaterial color={strokeColor} />
             </lineSegments>
           )}
-          {data.type !== 'hardware' && sawPathGeometry && sawPartId === data.id && (
+          {data.type !== 'hardware' && sawPathGeometry && sawPartId === data.id && activeSawFace && (
             <line renderOrder={6} raycast={() => null}>
               <primitive object={sawPathGeometry} attach="geometry" />
               <lineBasicMaterial color="#0ea5e9" />
             </line>
           )}
-          {data.type !== 'hardware' && sawPartId === data.id && sawPath.map(([x, z], index) => (
-            <mesh key={`saw-point-${index}`} position={[x, height / 2 + 0.045, z]} raycast={() => null} renderOrder={7}>
+          {data.type !== 'hardware' && sawPartId === data.id && activeSawFace && sawPath.map((point, index) => (
+            <mesh
+              key={`saw-point-${index}`}
+              position={sawPointToLocal3d(point, activeSawFace, data.dimensions)}
+              raycast={() => null}
+              renderOrder={7}
+            >
               <sphereGeometry args={[0.08, 10, 10]} />
-              <meshBasicMaterial color={index === 0 ? '#f97316' : '#0284c7'} depthWrite={false} />
+              <meshBasicMaterial color={index === 0 ? '#38bdf8' : '#0ea5e9'} depthWrite={false} />
             </mesh>
           ))}
+          {data.type !== 'hardware' && hoverOnlyPreviewPosition && (
+            <mesh position={hoverOnlyPreviewPosition} raycast={() => null} renderOrder={7}>
+              <sphereGeometry args={[0.09, 12, 12]} />
+              <meshBasicMaterial color="#7dd3fc" depthWrite={false} />
+            </mesh>
+          )}
         </mesh>
         {data.type !== 'hardware' && structuralOverlayEnabled && heatOverlayGeometry && (
           <mesh
