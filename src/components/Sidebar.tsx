@@ -28,6 +28,11 @@ type AddPartOptions = {
   offsetXZ?: [number, number];
 };
 
+const LUMBER_ICON_SRC = '/icons/lumber-icon.jpg';
+const PLYWOOD_ICON_SRC = '/icons/plywood-icon.jpg';
+const SCREW_ICON_SRC = '/icons/screw-icon.jpg';
+const OTHER_ICON_SRC = '/icons/other-icon.jpg';
+
 const COMMON_PARTS: PartTemplate[] = [
   { name: '2x4 Lumber', dimensions: [1.5, 3.5, 96], type: 'lumber', category: 'lumber', color: '#eecfa1' },
   { name: '2x2 Stud', dimensions: [1.5, 1.5, 96], type: 'lumber', category: 'lumber', color: '#f0d6ac' },
@@ -145,6 +150,18 @@ const getPlywoodOptionLabel = (template: PartTemplate) => {
 };
 
 const getScrewOptionLabel = (template: PartTemplate) => template.name;
+
+const getLibraryThumbnailSrc = (group: LibraryPartGroup) => {
+  if (group.kind === 'lumber') return LUMBER_ICON_SRC;
+  if (group.kind === 'plywood') return PLYWOOD_ICON_SRC;
+  if (group.kind === 'screws') return SCREW_ICON_SRC;
+
+  const part = group.options[0];
+  if (part.type === 'sheet') return PLYWOOD_ICON_SRC;
+  if (part.type === 'lumber' || part.hardwareKind === 'dowel') return LUMBER_ICON_SRC;
+  if (part.hardwareKind === 'fastener') return SCREW_ICON_SRC;
+  return OTHER_ICON_SRC;
+};
 
 const sanitizeDimensions = (
   next: [number, number, number] | undefined,
@@ -1419,21 +1436,34 @@ export const Sidebar: React.FC = () => {
                         <button
                           key={group.id}
                           onClick={() => handleAddPart(part)}
-                          className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+                          className="w-full rounded-lg border border-slate-200 p-3 text-left transition-all hover:border-blue-500 hover:bg-blue-50 group"
                         >
-                          <div>
-                            <div className="font-medium text-slate-700">{part.name}</div>
-                            <div className="text-xs text-slate-500">
-                              {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="flex h-16 w-16 shrink-0 items-start justify-start overflow-hidden rounded-xl border border-white/70 bg-[#e1edfd] shadow-sm"
+                            >
+                              <img
+                                src={getLibraryThumbnailSrc(group)}
+                                alt=""
+                                aria-hidden="true"
+                                className="block w-full h-auto self-start"
+                              />
                             </div>
-                          </div>
-                          <div className="opacity-0 group-hover:opacity-100 text-blue-500">
-                            <Plus size={20} />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-slate-700">{part.name}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                              </div>
+                            </div>
+                            <div className="shrink-0 self-center opacity-0 text-blue-500 transition-opacity group-hover:opacity-100">
+                              <Plus size={20} />
+                            </div>
                           </div>
                         </button>
                       );
                     }
 
+                    const thumbnailSrc = getLibraryThumbnailSrc(group);
                     const selectedTemplateKey = librarySelections[group.id] ?? getTemplateKey(group.options[0]);
                     const selectedTemplate = group.options.find((part) => getTemplateKey(part) === selectedTemplateKey) ?? group.options[0];
                     const labelForOption = group.kind === 'lumber'
@@ -1455,29 +1485,41 @@ export const Sidebar: React.FC = () => {
                           }
                         }}
                         className={clsx(
-                          'group relative rounded-lg border border-slate-200 bg-slate-50 p-3 pr-11 space-y-2',
+                          'group relative rounded-lg border border-slate-200 bg-slate-50 p-3 pr-11 space-y-3',
                           !isAddPanelOpen && 'cursor-pointer'
                         )}
                       >
-                        <div>
-                          <div className="font-medium text-slate-700">{group.title}</div>
-                          <div className="text-xs text-slate-500">{group.description}</div>
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="flex h-16 w-16 shrink-0 items-start justify-start overflow-hidden rounded-xl border border-white/70 bg-[#e1edfd] shadow-sm"
+                          >
+                            <img
+                              src={thumbnailSrc}
+                              alt=""
+                              aria-hidden="true"
+                              className="block w-full h-auto self-start"
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-slate-700">{group.title}</div>
+                            <div className="text-xs text-slate-500">{group.description}</div>
+                            <div className="mt-1 text-xs text-slate-600">
+                              {labelForOption(selectedTemplate)} - {quantityLabel}
+                            </div>
+                          </div>
                         </div>
                         <button
                           onClick={() => setActiveAddGroupId((prev) => (prev === group.id ? null : group.id))}
                           className={clsx(
-                            'absolute right-3 rounded-md p-1.5 transition-colors transition-opacity duration-150 focus-visible:opacity-100',
+                            'absolute right-3 top-3 rounded-md p-1.5 transition-colors transition-opacity duration-150 focus-visible:opacity-100',
                             isAddPanelOpen
-                              ? 'top-3 opacity-100 bg-blue-100 text-blue-600 hover:bg-blue-200'
-                              : 'top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-blue-500 hover:bg-blue-100'
+                              ? 'opacity-100 bg-blue-100 text-blue-600 hover:bg-blue-200'
+                              : 'opacity-70 text-blue-500 hover:bg-blue-100 group-hover:opacity-100'
                           )}
                           title={isAddPanelOpen ? `Close ${group.title} options` : `Add ${group.title}`}
                         >
                           <Plus size={18} className={clsx('transition-transform', isAddPanelOpen && 'rotate-45')} />
                         </button>
-                        <div className="text-xs text-slate-600">
-                          {labelForOption(selectedTemplate)} - {quantityLabel}
-                        </div>
                         {isAddPanelOpen && (
                           <div className="rounded-md border border-slate-200 bg-white p-2.5 space-y-2">
                             <div>

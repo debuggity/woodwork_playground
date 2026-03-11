@@ -50,10 +50,17 @@ type AppRoute = { page: RouteId; blogSlug?: string };
 type TutorialAction = 'add' | 'close-build-panel' | 'move' | 'resize' | 'close-edit-panel' | 'rotate' | 'center';
 type TutorialTool = 'select' | 'move' | 'rotate';
 
+const BRAND_NAME = 'Beavarius Woodstudio';
+const BRAND_SHORT_NAME = 'Beavarius';
+const BRAND_TAGLINE = '3D Woodworking Planner';
+const BRAND_LOGO_SRC = '/icons/beavarius-logo.png';
+const BRAND_LOCKUP_SRC = '/icons/logo-title.png';
+const BRAND_JOURNAL_NAME = `${BRAND_NAME} Journal`;
+
 const COOKIE_CONSENT_KEY = 'woodworker_cookie_consent';
 const INTERACTIVE_TUTORIAL_SLUG = 'interactive-quickstart-build-your-first-layout';
 const ADVANCED_FEATURES_SLUG = 'advanced-features-special-tools-and-control-panel';
-const STANDING_DESK_TOPPER_SLUG = 'why-i-built-woodworker-and-fixed-my-neck-pain';
+const STANDING_DESK_TOPPER_SLUG = 'why-i-built-beavarius-woodstudio-and-fixed-my-neck-pain';
 const PENDING_PROJECT_IMPORT_KEY = 'woodworker_pending_project_import_asset';
 const PENDING_PROJECT_IMPORT_PAYLOAD_KEY = 'woodworker_pending_project_import_payload';
 const STANDING_DESK_TOPPER_IMPORT_ASSET = '/blogs/standing-desk-topper/standing-desk-topper.json';
@@ -93,12 +100,12 @@ const BLOG_POSTS: BlogPost[] = [
   },
   {
     slug: STANDING_DESK_TOPPER_SLUG,
-    title: 'Why I made WoodWorker: my $0 standing desk topper story',
+    title: `Why I made ${BRAND_NAME}: my $0 standing desk topper story`,
     date: 'February 2026',
     summary: 'How neck pain pushed me to build software, plan my first woodworking project, and build a standing desk topper from scrap.',
     body: [
       'I needed a standing desk setup fast, but everything online was expensive.',
-      'So I used WoodWorker to plan a full topper build before making a single cut.',
+      `So I used ${BRAND_NAME} to plan a full topper build before making a single cut.`,
     ],
   },
   {
@@ -113,7 +120,7 @@ const BLOG_POSTS: BlogPost[] = [
       'For heavier shelves, thicker stock, and high-load connections, move to #12 x 3 in screws. This is the better option when anti-wobble and long-term stiffness matter.',
       'A quick sizing rule: target screw penetration into the receiving piece at roughly 1 to 1.5 times that piece thickness when practical, while keeping tip blow-through under control.',
       'Near edges or on plywood layers, pre-drill pilot holes and reduce diameter before increasing length. This improves consistency and lowers the chance of cracking veneers or end grain splits.',
-      'In WoodWorker, plan fastener layout first with Auto Screw, then verify edge spacing in your view before committing to final hardware count.',
+      `In ${BRAND_NAME}, plan fastener layout first with Auto Screw, then verify edge spacing in your view before committing to final hardware count.`,
       'For SEO and real project planning keywords: wood screw size chart, cabinet screw length, screw diameter for plywood, and furniture joint screw selection are all covered by this workflow.',
     ],
   },
@@ -129,7 +136,7 @@ const BLOG_POSTS: BlogPost[] = [
       'Third, choose smaller screws for narrow overlaps. Two smaller screws spaced correctly are often stronger and cleaner than one oversized fastener near a corner.',
       'Use staggered screw lines when fastening long seams. Staggering spreads stress and helps avoid creating a single fracture line along the grain.',
       'Countersink carefully if screw heads need to sit flush. Over-countersinking removes top-layer material and can weaken thin panels around the head.',
-      'Inside WoodWorker, use Select Assist and Edge Snap to place parts accurately, then use Auto Screw to prototype screw locations without committing to risky edge placements.',
+      `Inside ${BRAND_NAME}, use Select Assist and Edge Snap to place parts accurately, then use Auto Screw to prototype screw locations without committing to risky edge placements.`,
       'If a joint still looks risky, redesign with a cleat or backing strip. Adding support geometry is usually better than forcing larger screws into weak edges.',
     ],
   },
@@ -145,7 +152,7 @@ const BLOG_POSTS: BlogPost[] = [
       'Digital planning also improves cut-list quality. When parts are modeled correctly, your cuts list and shopping list are cleaner, which means fewer guesswork purchases.',
       'For new builders, this removes a lot of anxiety. You can preview the full build, check fit, and rehearse joins in software instead of learning every lesson on scrap costs.',
       'For experienced builders, it saves throughput time. You spend less time re-measuring and more time making clean cuts and accurate assemblies.',
-      'In WoodWorker, practical speed comes from combining move/rotate tools, edge snap, auto-centering camera, and export/import to iterate versions quickly.',
+      `In ${BRAND_NAME}, practical speed comes from combining move/rotate tools, edge snap, auto-centering camera, and export/import to iterate versions quickly.`,
       'If your goal is faster projects with fewer surprises, 3D woodworking design software is one of the highest-leverage upgrades you can make.',
     ],
   },
@@ -160,6 +167,16 @@ const routeToHash = (route: AppRoute) => {
   if (route.page === 'home') return '#/';
   if (route.page === 'blog' && route.blogSlug) return `#/blog/${route.blogSlug}`;
   return `#/${route.page}`;
+};
+
+const getDocumentTitle = (route: AppRoute) => {
+  if (route.page === 'home') return `${BRAND_NAME} - ${BRAND_TAGLINE}`;
+  if (route.page === 'app') return `${BRAND_NAME} Build Studio`;
+  if (route.page === 'blog' && route.blogSlug && BLOG_POST_BY_SLUG[route.blogSlug]) {
+    return `${BLOG_POST_BY_SLUG[route.blogSlug].title} | ${BRAND_NAME}`;
+  }
+  if (route.page === 'blog') return `${BRAND_JOURNAL_NAME} | ${BRAND_NAME}`;
+  return `${ROUTE_LABELS[route.page]} | ${BRAND_NAME}`;
 };
 
 const toSimplePageRoute = (value: string): RouteId | null => {
@@ -209,23 +226,29 @@ const SectionCard = ({ title, children }: { title: string; children: React.React
 
 const HomePage = ({ openApp }: { openApp: () => void }) => (
   <div className="space-y-6">
-    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 sm:p-10 shadow-sm">
+    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 text-center sm:p-10 shadow-sm">
       <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-amber-300/15 blur-3xl" />
       <div className="pointer-events-none absolute -left-20 -bottom-20 h-56 w-56 rounded-full bg-blue-300/15 blur-3xl" />
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 font-semibold">WoodWorker</p>
-      <h1 className="mt-3 max-w-4xl text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">
+      <div className="mx-auto max-w-[18rem]">
+        <img src={BRAND_LOCKUP_SRC} alt={BRAND_NAME} className="h-auto w-full object-contain" />
+      </div>
+      <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
+        <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-4 w-4 object-contain" />
+        {BRAND_TAGLINE}
+      </p>
+      <h1 className="mx-auto mt-3 max-w-4xl text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">
         Woodworking for everyone,
         <span className="block">with real-world results.</span>
       </h1>
-      <p className="mt-4 max-w-3xl text-slate-700 text-lg">
+      <p className="mx-auto mt-4 max-w-3xl text-lg text-slate-700">
         Move parts around like digital LEGO, use smart helpers like Auto Screw, and generate cut and shopping lists so projects stay fun, clear, and build-ready.
       </p>
-      <div className="mt-5 flex flex-wrap gap-2 text-xs">
+      <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
         <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Beginner-friendly</span>
         <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Serious-project ready</span>
         <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Export + share anytime</span>
       </div>
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-6 flex flex-wrap justify-center gap-3">
         <button
           onClick={openApp}
           className="rounded-lg bg-blue-600 px-5 py-2.5 text-white font-medium hover:bg-blue-700"
@@ -287,43 +310,22 @@ const HomePage = ({ openApp }: { openApp: () => void }) => (
   </div>
 );
 
-const BlogTitleSvg = () => (
-  <svg
-    viewBox="0 0 760 248"
-    preserveAspectRatio="xMidYMid meet"
-    className="h-auto w-full max-w-3xl"
-    role="img"
-    aria-label="Blog title graphic"
-  >
-    <defs>
-      <linearGradient id="blogAccentGradient" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stopColor="#1d4ed8" />
-        <stop offset="50%" stopColor="#2563eb" />
-        <stop offset="100%" stopColor="#0ea5e9" />
-      </linearGradient>
-    </defs>
-    <rect x="110" y="28" width="540" height="56" rx="14" fill="url(#blogAccentGradient)" />
-    <text x="170" y="65" textAnchor="start" fontSize="28" fontWeight="700" fill="#eff6ff" style={{ letterSpacing: '0.18em' }}>
-      BLOG
-    </text>
-    <text x="320" y="65" textAnchor="start" fontSize="20" fontWeight="500" fill="#dbeafe">
-      WoodWorker Journal
-    </text>
-    <text x="380" y="124" textAnchor="middle" fontSize="32" fontWeight="800" fill="#0f172a">
-      Build notes, workflows,
-    </text>
-    <text x="380" y="152" textAnchor="middle" fontSize="31" fontWeight="800" fill="#0f172a">
-      and practical shop tips.
-    </text>
-    <text x="380" y="183" textAnchor="middle" fontSize="23" fontWeight="700" fill="#334155">
-      Simple reads for better plans
-    </text>
-    <text x="380" y="207" textAnchor="middle" fontSize="23" fontWeight="700" fill="#334155">
-      and cleaner projects.
-    </text>
-    <line x1="150" y1="228" x2="610" y2="228" stroke="#93c5fd" strokeWidth="10" strokeLinecap="round" />
-    <line x1="180" y1="242" x2="580" y2="242" stroke="#bfdbfe" strokeWidth="8" strokeLinecap="round" />
-  </svg>
+const BlogTitleGraphic = () => (
+  <div className="w-full max-w-3xl text-center">
+    <div className="mx-auto max-w-[24rem]">
+      <img src={BRAND_LOCKUP_SRC} alt={BRAND_NAME} className="h-auto w-full object-contain" />
+    </div>
+    <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">
+      <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-4 w-4 object-contain" />
+      Journal
+    </div>
+    <p className="mt-4 text-2xl font-semibold text-slate-900 sm:text-3xl">
+      Build notes, workflows, and practical shop tips.
+    </p>
+    <p className="mt-2 text-lg font-medium text-slate-600">
+      Simple reads for better plans and cleaner projects.
+    </p>
+  </div>
 );
 
 const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
@@ -336,7 +338,7 @@ const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
         <div className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full bg-blue-300/15 blur-3xl" />
         <div className="pointer-events-none absolute -left-16 -bottom-20 h-52 w-52 rounded-full bg-sky-200/20 blur-3xl" />
         <div className="relative flex justify-center">
-          <BlogTitleSvg />
+          <BlogTitleGraphic />
         </div>
       </section>
 
@@ -2117,7 +2119,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
       ],
       media: '/blogs/standing-desk-topper/1-add-plywood-shape-for-screen.png',
       mediaType: 'image',
-      alt: 'Step 1 plywood monitor platform setup in WoodWorker',
+      alt: `Step 1 plywood monitor platform setup in ${BRAND_NAME}`,
     },
     {
       id: 2,
@@ -2129,7 +2131,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
       ],
       media: '/blogs/standing-desk-topper/2-add-legs-for-screen-height.png',
       mediaType: 'image',
-      alt: 'Step 2 adding legs for screen height in WoodWorker',
+      alt: `Step 2 adding legs for screen height in ${BRAND_NAME}`,
     },
     {
       id: 3,
@@ -2177,7 +2179,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
       ],
       media: '/blogs/standing-desk-topper/6-use-auto-screw.png',
       mediaType: 'image',
-      alt: 'Step 6 using auto screw in WoodWorker',
+      alt: `Step 6 using auto screw in ${BRAND_NAME}`,
     },
     {
       id: 7,
@@ -2189,7 +2191,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
       ],
       media: '/blogs/standing-desk-topper/7-cut-list-shopping-list.png',
       mediaType: 'image',
-      alt: 'Step 7 cut list and shopping list view in WoodWorker',
+      alt: `Step 7 cut list and shopping list view in ${BRAND_NAME}`,
     },
     {
       id: 8,
@@ -2232,7 +2234,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
             Real Build Story
           </div>
           <h1 className="mt-3 text-2xl sm:text-3xl font-semibold text-slate-900">
-            Why I made WoodWorker, and how it helped fix my neck pain
+            Why I made {BRAND_NAME}, and how it helped fix my neck pain
           </h1>
           <p className="mt-3 text-slate-700 max-w-4xl">
             I noticed that my neck was hurting badly while sitting at my computer. I wanted better posture and blood flow, so I decided to convert my
@@ -2266,7 +2268,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
         </div>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-slate-900">How I planned the build in WoodWorker</h2>
+          <h2 className="text-lg font-semibold text-slate-900">How I planned the build in {BRAND_NAME}</h2>
           <p className="text-sm text-slate-700">
             This was my exact planning sequence from measurements to hardware placement, then cut and shopping prep.
           </p>
@@ -2394,7 +2396,7 @@ const BlogPostPage = ({ post, backToBlog, openApp }: { post: BlogPost; backToBlo
 
 const AboutPage = () => (
   <SectionCard title="About">
-    <p>WoodWorker is built to reduce friction between design and real-world builds.</p>
+    <p>{BRAND_NAME} is built to reduce friction between design and real-world builds.</p>
     <p>
       The goal is simple: make planning faster, clearer, and less error-prone without forcing a heavy CAD workflow for everyday woodworking.
     </p>
@@ -2473,6 +2475,10 @@ const ContactPage = () => {
 const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: RouteId) => void; activePage: RouteId }) => (
   <div className="fixed left-1/2 -translate-x-1/2 bottom-3 z-50 max-w-[calc(100vw-1rem)] rounded-lg border border-slate-200 bg-white/95 backdrop-blur px-3 py-2 shadow-sm">
     <div className="flex items-center gap-2 text-xs text-slate-600">
+      <div className="hidden sm:flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+        <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-5 w-5 object-contain" />
+        <span className="font-semibold text-slate-700">{BRAND_SHORT_NAME}</span>
+      </div>
       <button
         onClick={() => navigate('app')}
         className={`rounded-md px-3 py-1.5 text-[12px] font-semibold shadow-sm transition-colors ${
@@ -2550,6 +2556,10 @@ export function App() {
     }
   }, [route]);
 
+  useEffect(() => {
+    document.title = getDocumentTitle(route);
+  }, [route]);
+
   const navigate = (nextRoute: RouteId) => setRoute({ page: nextRoute });
   const openBlogPost = (slug: string) => setRoute({ page: 'blog', blogSlug: slug });
   const activePage = route.page;
@@ -2584,8 +2594,15 @@ export function App() {
     <div className="min-h-dvh bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-          <button onClick={() => navigate('home')} className="font-semibold tracking-tight text-slate-900">
-            WoodWorker
+          <button
+            onClick={() => navigate('home')}
+            className="inline-flex items-center gap-3 rounded-lg px-2 py-1 text-left text-slate-900 hover:bg-slate-100"
+          >
+            <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-9 w-9 object-contain" />
+            <span>
+              <span className="block font-semibold tracking-tight">{BRAND_NAME}</span>
+              <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">{BRAND_TAGLINE}</span>
+            </span>
           </button>
           <nav className="flex flex-wrap items-center gap-1">
             {ROUTE_ORDER.map((item) => (
@@ -2609,7 +2626,7 @@ export function App() {
 
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
-          <p>© 2026 WoodWorker</p>
+          <p>&copy; 2026 {BRAND_NAME}</p>
           <div className="flex items-center gap-2">
             {(['privacy', 'terms', 'contact'] as RouteId[]).map((item) => (
               <button key={item} onClick={() => navigate(item)} className="rounded px-2 py-1 hover:bg-slate-100">
