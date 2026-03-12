@@ -882,8 +882,13 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       const spanCoord = structuralField.primarySpanAxis === 'x'
         ? Math.abs(localPoint.x) / halfW
         : Math.abs(localPoint.z) / halfD;
-      // Highest sag risk is usually near the middle of a free span, not the edges.
-      const freeSpanRisk = clamp(1 - spanCoord, 0, 1);
+      const primaryFreeSpanRisk = clamp(1 - spanCoord, 0, 1);
+      const panelCenterRisk = clamp(1 - Math.abs(localPoint.x) / halfW, 0, 1)
+        * clamp(1 - Math.abs(localPoint.z) / halfD, 0, 1);
+      // Panels should emphasize unsupported centers, while beams emphasize the primary free span.
+      const freeSpanRisk = structuralField.memberMode === 'panel'
+        ? clamp(primaryFreeSpanRisk * 0.45 + panelCenterRisk * 0.95, 0, 1)
+        : primaryFreeSpanRisk;
 
       const edgeDistanceX = Math.max(0, halfW - Math.abs(localPoint.x));
       const edgeDistanceZ = Math.max(0, halfD - Math.abs(localPoint.z));
@@ -895,16 +900,18 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       const sagRisk = clamp((worldPoint.y - data.position[1]) / Math.max(height, 0.5), -0.2, 1);
       const supportDistanceRisk = clamp(1 - supportInfluence * 1.22, 0, 1);
       const loadedEdgeRisk = edgeRisk * clamp(0.2 + loadInfluence * 0.8, 0, 1);
+      const panelMode = structuralField.memberMode === 'panel';
+      const jointMode = structuralField.memberMode === 'joint';
       const risk = clamp(
-        baseRisk * 0.26
-          + supportSpanRisk * 0.21
-          + loadInfluence * 0.47
-          + freeSpanRisk * 0.27
-          + supportDistanceRisk * 0.24
-          + loadedEdgeRisk * 0.06
-          + Math.max(0, sagRisk) * 0.08
-          - supportInfluence * 0.68
-          - fastenerInfluence * 0.27,
+        baseRisk * (jointMode ? 0.16 : panelMode ? 0.32 : 0.26)
+          + supportSpanRisk * (jointMode ? 0.1 : panelMode ? 0.3 : 0.21)
+          + loadInfluence * (jointMode ? 0.18 : panelMode ? 0.55 : 0.47)
+          + freeSpanRisk * (jointMode ? 0.08 : panelMode ? 0.42 : 0.27)
+          + supportDistanceRisk * (jointMode ? 0.12 : panelMode ? 0.34 : 0.24)
+          + loadedEdgeRisk * (jointMode ? 0.03 : panelMode ? 0.04 : 0.06)
+          + Math.max(0, sagRisk) * (panelMode ? 0.16 : 0.08)
+          - supportInfluence * (jointMode ? 0.72 : panelMode ? 0.54 : 0.68)
+          - fastenerInfluence * (jointMode ? 0.34 : 0.27),
         0,
         1
       );

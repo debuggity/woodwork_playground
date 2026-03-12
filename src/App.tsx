@@ -50,17 +50,17 @@ type AppRoute = { page: RouteId; blogSlug?: string };
 type TutorialAction = 'add' | 'close-build-panel' | 'move' | 'resize' | 'close-edit-panel' | 'rotate' | 'center';
 type TutorialTool = 'select' | 'move' | 'rotate';
 
-const BRAND_NAME = 'Beavarius Woodstudio';
-const BRAND_SHORT_NAME = 'Beavarius';
+const BRAND_NAME = 'BEAV.IT';
+const BRAND_SHORT_NAME = 'BEAV.IT';
 const BRAND_TAGLINE = '3D Woodworking Planner';
-const BRAND_LOGO_SRC = '/icons/beavarius-logo.png';
+const BRAND_LOGO_SRC = '/icons/beav-it-logo.png';
 const BRAND_LOCKUP_SRC = '/icons/logo-title.png';
 const BRAND_JOURNAL_NAME = `${BRAND_NAME} Journal`;
 
 const COOKIE_CONSENT_KEY = 'woodworker_cookie_consent';
 const INTERACTIVE_TUTORIAL_SLUG = 'interactive-quickstart-build-your-first-layout';
 const ADVANCED_FEATURES_SLUG = 'advanced-features-special-tools-and-control-panel';
-const STANDING_DESK_TOPPER_SLUG = 'why-i-built-beavarius-woodstudio-and-fixed-my-neck-pain';
+const STANDING_DESK_TOPPER_SLUG = 'why-i-built-beav-it-and-fixed-my-neck-pain';
 const PENDING_PROJECT_IMPORT_KEY = 'woodworker_pending_project_import_asset';
 const PENDING_PROJECT_IMPORT_PAYLOAD_KEY = 'woodworker_pending_project_import_payload';
 const STANDING_DESK_TOPPER_IMPORT_ASSET = '/blogs/standing-desk-topper/standing-desk-topper.json';
@@ -224,36 +224,84 @@ const SectionCard = ({ title, children }: { title: string; children: React.React
   </section>
 );
 
-const HomePage = ({ openApp }: { openApp: () => void }) => (
+const PingPongVideo = ({ src, className }: { src: string; className?: string }) => {
+  return (
+    <video
+      className={className}
+      src={src}
+      autoPlay
+      loop
+      muted
+      playsInline
+      preload="auto"
+    />
+  );
+};
+
+const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug: string) => void }) => (
   <div className="space-y-6">
-    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 text-center sm:p-10 shadow-sm">
+    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 shadow-sm sm:p-10">
       <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-amber-300/15 blur-3xl" />
       <div className="pointer-events-none absolute -left-20 -bottom-20 h-56 w-56 rounded-full bg-blue-300/15 blur-3xl" />
-      <div className="mx-auto max-w-[18rem]">
+      <div className="relative mx-auto max-w-5xl space-y-8 text-center">
+        <div>
+          <div className="mx-auto max-w-[18rem]">
         <img src={BRAND_LOCKUP_SRC} alt={BRAND_NAME} className="h-auto w-full object-contain" />
-      </div>
-      <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
-        <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-4 w-4 object-contain" />
-        {BRAND_TAGLINE}
-      </p>
-      <h1 className="mx-auto mt-3 max-w-4xl text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">
-        Woodworking for everyone,
-        <span className="block">with real-world results.</span>
-      </h1>
-      <p className="mx-auto mt-4 max-w-3xl text-lg text-slate-700">
-        Move parts around like digital LEGO, use smart helpers like Auto Screw, and generate cut and shopping lists so projects stay fun, clear, and build-ready.
-      </p>
-      <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
-        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Beginner-friendly</span>
-        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Serious-project ready</span>
-        <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Export + share anytime</span>
-      </div>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
+          </div>
+          <p className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/85 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
+            <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-4 w-4 object-contain" />
+            {BRAND_TAGLINE}
+          </p>
+          <h1 className="mx-auto mt-4 max-w-4xl text-4xl font-semibold leading-tight text-slate-900 sm:text-5xl">
+            Woodworking for everyone,
+            <span className="block">with real-world results.</span>
+          </h1>
+          <p className="mx-auto mt-4 max-w-xl text-base text-slate-700 sm:text-lg">
+            Use smart 3D planning, Auto Screw, and instant cut and shopping lists to turn ideas into build-ready projects fast.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <button
+              onClick={openApp}
+              className="rounded-xl bg-blue-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              Start Building Free
+            </button>
+          </div>
+          <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
+            <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Beginner-friendly</span>
+            <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Serious-project ready</span>
+            <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Export + share anytime</span>
+          </div>
+        </div>
+
         <button
           onClick={openApp}
-          className="rounded-lg bg-blue-600 px-5 py-2.5 text-white font-medium hover:bg-blue-700"
+          className="mx-auto block w-full max-w-[32rem] cursor-pointer text-left"
+          aria-label="Open live planner preview in build mode"
         >
-          Start Building
+          <div className="cursor-pointer overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white/90 p-3 shadow-[0_24px_70px_-36px_rgba(15,23,42,0.45)] backdrop-blur">
+            <div className="rounded-[1.2rem] border border-slate-200 bg-slate-950 p-2 shadow-inner">
+              <div className="mb-2 flex items-center gap-1.5 px-2">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+                <span className="ml-2 text-[10px] font-medium uppercase tracking-[0.2em] text-cyan-100/70">
+                  Live Planner Preview
+                </span>
+              </div>
+              <div className="overflow-hidden rounded-[0.95rem] border border-cyan-400/10 bg-slate-900">
+                <PingPongVideo
+                  className="aspect-[16/10] h-full w-full object-cover"
+                  src="/preview-pingpong.mp4"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-600">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">3D part layout</span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Auto Screw</span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Import / export</span>
+            </div>
+          </div>
         </button>
       </div>
     </section>
@@ -307,6 +355,54 @@ const HomePage = ({ openApp }: { openApp: () => void }) => (
         </p>
       </div>
     </div>
+
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="flex flex-col gap-2 text-center sm:text-left">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Start Here</p>
+        <h2 className="text-2xl font-semibold text-slate-900">Quick blog links for getting started</h2>
+        <p className="max-w-2xl text-sm text-slate-600">
+          Jump straight to the hands-on walkthroughs and the story behind why {BRAND_NAME} exists.
+        </p>
+      </div>
+      <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <button
+          onClick={() => openPost(INTERACTIVE_TUTORIAL_SLUG)}
+          className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-5 text-left shadow-sm hover:border-blue-300"
+        >
+          <span className="inline-flex rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-800">
+            Quick Start
+          </span>
+          <h3 className="mt-3 text-lg font-semibold text-slate-900">Build your first layout</h3>
+          <p className="mt-2 text-sm text-slate-700">
+            Learn the basics in minutes with the interactive quickstart tutorial.
+          </p>
+        </button>
+        <button
+          onClick={() => openPost(ADVANCED_FEATURES_SLUG)}
+          className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 text-left shadow-sm hover:border-indigo-300"
+        >
+          <span className="inline-flex rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-800">
+            Advanced Tutorial
+          </span>
+          <h3 className="mt-3 text-lg font-semibold text-slate-900">Master the special tools</h3>
+          <p className="mt-2 text-sm text-slate-700">
+            See Auto Screw, overlap trimming, control panel tools, and more in one guide.
+          </p>
+        </button>
+        <button
+          onClick={() => openPost(STANDING_DESK_TOPPER_SLUG)}
+          className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-lime-50 p-5 text-left shadow-sm hover:border-emerald-300"
+        >
+          <span className="inline-flex rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-800">
+            My Story
+          </span>
+          <h3 className="mt-3 text-lg font-semibold text-slate-900">Why I built {BRAND_NAME}</h3>
+          <p className="mt-2 text-sm text-slate-700">
+            Read the standing desk topper story that turned a real build problem into this app.
+          </p>
+        </button>
+      </div>
+    </section>
   </div>
 );
 
@@ -2565,7 +2661,9 @@ export function App() {
   const activePage = route.page;
 
   const page = useMemo(() => {
-    if (activePage === 'home') return <HomePage openApp={() => navigate('app')} />;
+    if (activePage === 'home') {
+      return <HomePage openApp={() => navigate('app')} openPost={(slug) => setRoute({ page: 'blog', blogSlug: slug })} />;
+    }
     if (activePage === 'blog') {
       const post = route.blogSlug ? BLOG_POST_BY_SLUG[route.blogSlug] : null;
       if (post) {

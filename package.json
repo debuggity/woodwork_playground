@@ -1,5 +1,5 @@
 {
-  "name": "beavarius-woodstudio",
+  "name": "beav-it",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -17,6 +17,7 @@
     "jspdf": "^4.1.0",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.563.0",
+    "polygon-clipping": "^0.15.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwind-merge": "3.4.0",

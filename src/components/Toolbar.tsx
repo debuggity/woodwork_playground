@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2, ArrowDown, MoveHorizontal, Zap } from 'lucide-react';
 import { CutCorner, PartData } from '../types';
 import * as THREE from 'three';
+import polygonClipping from 'polygon-clipping';
 import { analyzeStructuralIntegrity, STRESS_SCENARIO_OPTIONS } from '../structuralAnalysis';
 import type { StressScenario } from '../structuralAnalysis';
 
@@ -680,7 +681,177 @@ const columnOverlapsCutter = (
   return false;
 };
 
-const analyzeTrimmedFootprint = (selectedPart: PartData, cutterParts: PartData[]) => {
+const isParallelToSelectedPlane = (selectedFrame: OrientedFrame, cutterFrame: OrientedFrame) =>
+  Math.abs(selectedFrame.axes[1].dot(cutterFrame.axes[1])) >= 0.999;
+
+const getFrameBoundsInTargetFrame = (targetFrame: OrientedFrame, sourceFrame: OrientedFrame) => {
+  const corners = getWorldCorners(sourceFrame).map((corner) => toFrameLocal(targetFrame, corner));
+  return {
+    xmin: Math.min(...corners.map((corner) => corner.x)),
+    xmax: Math.max(...corners.map((corner) => corner.x)),
+    ymin: Math.min(...corners.map((corner) => corner.y)),
+    ymax: Math.max(...corners.map((corner) => corner.y)),
+    zmin: Math.min(...corners.map((corner) => corner.z)),
+    zmax: Math.max(...corners.map((corner) => corner.z)),
+  };
+};
+
+const projectFootprintIntoFrame = (
+  targetFrame: OrientedFrame,
+  sourceFrame: OrientedFrame,
+  points: Point2[]
+) =>
+  points.map(([x, z]) => {
+    const worldPoint = sourceFrame.center.clone()
+      .add(sourceFrame.axes[0].clone().multiplyScalar(x))
+      .add(sourceFrame.axes[2].clone().multiplyScalar(z));
+    const local = toFrameLocal(targetFrame, worldPoint);
+    return [local.x, local.z] as Point2;
+  });
+
+const normalizeClipperRing = (ring: number[][]): Point2[] => {
+  const normalized = ring.map(([x, z]) => [x, z] as Point2);
+  if (normalized.length > 1) {
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= OVERLAP_EPS) {
+      normalized.pop();
+    }
+  }
+  const simplified = simplifyPolygonLoop(normalized, OVERLAP_EPS * 0.5);
+  if (simplified.length < 3) return simplified;
+  return signedPolygonArea(simplified) < 0 ? [...simplified].reverse() : simplified;
+};
+
+const analyzeTrimmedFootprintExact = (selectedPart: PartData, cutterParts: PartData[]) => {
+  const selectedFrame = buildOrientedFrame(selectedPart);
+  const selectedFootprintPoints = getLocalFootprintPoints(selectedPart);
+  const selected: FootprintPolygon = {
+    points: selectedFootprintPoints,
+    bounds: getLocalFootprintBounds(selectedFootprintPoints),
+  };
+  const selectedAabb = getFrameAabb(selectedFrame);
+
+  const candidateCutters = cutterParts
+    .map((part) => ({
+      part,
+      frame: buildOrientedFrame(part),
+      footprint: getLocalFootprintPoints(part),
+    }))
+    .filter((item) => aabb3Overlaps(selectedAabb, getFrameAabb(item.frame)));
+
+  if (candidateCutters.length === 0) {
+    return { ok: false as const, message: 'No overlapping wood/sheet pieces were found to trim against.' };
+  }
+
+  if (candidateCutters.some((cutter) => !isParallelToSelectedPlane(selectedFrame, cutter.frame))) {
+    return null;
+  }
+
+  const clipPolygons = candidateCutters
+    .map((cutter) => {
+      const cutterBounds = getFrameBoundsInTargetFrame(selectedFrame, cutter.frame);
+      const overlapY = Math.min(selectedFrame.half[1], cutterBounds.ymax) - Math.max(-selectedFrame.half[1], cutterBounds.ymin);
+      if (overlapY <= OVERLAP_EPS) return null;
+
+      const projected = simplifyPolygonLoop(
+        projectFootprintIntoFrame(selectedFrame, cutter.frame, cutter.footprint),
+        OVERLAP_EPS * 0.5
+      );
+      if (projected.length < 3 || Math.abs(signedPolygonArea(projected)) <= OVERLAP_EPS * 2) return null;
+      const ring = signedPolygonArea(projected) < 0 ? [...projected].reverse() : projected;
+      return [ring.map(([x, z]) => [x, z])];
+    })
+    .filter((polygon): polygon is number[][][] => Boolean(polygon));
+
+  if (clipPolygons.length === 0) {
+    return { ok: false as const, message: 'No overlapping area found to trim on the selected piece.' };
+  }
+
+  const selectedArea = Math.abs(signedPolygonArea(selected.points));
+  const rawResult = polygonClipping.difference(
+    [selected.points.map(([x, z]) => [x, z])],
+    ...clipPolygons
+  ) as number[][][][] | null;
+
+  if (!rawResult || rawResult.length === 0) {
+    return { ok: false as const, message: 'Trim would remove the entire selected piece, so nothing was changed.' };
+  }
+
+  const polygons = rawResult
+    .map((polygon) => ({
+      outer: normalizeClipperRing(polygon[0] ?? []),
+      holes: polygon.slice(1).map((ring) => normalizeClipperRing(ring)),
+    }))
+    .filter((polygon) => polygon.outer.length >= 3);
+
+  const significantPolygons = polygons
+    .map((polygon) => {
+      const outerArea = Math.abs(signedPolygonArea(polygon.outer));
+      const holeArea = polygon.holes.reduce((sum, hole) => sum + Math.abs(signedPolygonArea(hole)), 0);
+      return {
+        ...polygon,
+        area: outerArea - holeArea,
+      };
+    })
+    .filter((polygon) => polygon.area > OVERLAP_EPS * 4)
+    .sort((a, b) => b.area - a.area);
+
+  if (significantPolygons.length === 0) {
+    return { ok: false as const, message: 'Trim would remove the entire selected piece, so nothing was changed.' };
+  }
+
+  if (significantPolygons.length > 1) {
+    return {
+      ok: false as const,
+      message: 'Trim result split into multiple islands/holes. Try trimming in smaller steps.',
+    };
+  }
+
+  const [result] = significantPolygons;
+  const meaningfulHole = result.holes.some((hole) => Math.abs(signedPolygonArea(hole)) > OVERLAP_EPS * 8);
+  if (meaningfulHole) {
+    return {
+      ok: false as const,
+      message: 'Trim result split into multiple islands/holes. Try trimming in smaller steps.',
+    };
+  }
+
+  const removedArea = selectedArea - result.area;
+  if (removedArea <= OVERLAP_EPS * 4) {
+    return { ok: false as const, message: 'No overlapping area found to trim on the selected piece.' };
+  }
+
+  const bounds = {
+    xmin: Math.min(...result.outer.map(([x]) => x)),
+    xmax: Math.max(...result.outer.map(([x]) => x)),
+    zmin: Math.min(...result.outer.map(([, z]) => z)),
+    zmax: Math.max(...result.outer.map(([, z]) => z)),
+  };
+
+  const bboxArea = (bounds.xmax - bounds.xmin) * (bounds.zmax - bounds.zmin);
+  if (Math.abs(result.area - bboxArea) <= Math.max(OVERLAP_EPS * 2, bboxArea * 0.02)) {
+    return {
+      ok: true as const,
+      bounds,
+      profile: { type: 'rect' as const },
+      removedArea,
+    };
+  }
+
+  const centerX = (bounds.xmin + bounds.xmax) / 2;
+  const centerZ = (bounds.zmin + bounds.zmax) / 2;
+  const localPoints = result.outer.map(([x, z]) => [x - centerX, z - centerZ] as [number, number]);
+
+  return {
+    ok: true as const,
+    bounds,
+    profile: { type: 'polygon' as const, points: localPoints },
+    removedArea,
+  };
+};
+
+const analyzeTrimmedFootprintSampled = (selectedPart: PartData, cutterParts: PartData[]) => {
   const selectedFrame = buildOrientedFrame(selectedPart);
   const selectedFootprintPoints = getLocalFootprintPoints(selectedPart);
   const selected: FootprintPolygon = {
@@ -846,6 +1017,31 @@ const analyzeTrimmedFootprint = (selectedPart: PartData, cutterParts: PartData[]
     profile: { type: 'polygon' as const, points: localPoints },
     removedArea,
   };
+};
+
+const analyzeTrimmedFootprint = (selectedPart: PartData, cutterParts: PartData[]) => {
+  const exactResult = analyzeTrimmedFootprintExact(selectedPart, cutterParts);
+  const sampledResult = analyzeTrimmedFootprintSampled(selectedPart, cutterParts);
+
+  if (exactResult === null) {
+    return sampledResult;
+  }
+
+  if (!exactResult.ok) {
+    return sampledResult.ok ? sampledResult : exactResult;
+  }
+
+  if (!sampledResult.ok) {
+    const tinyTrimThreshold = 0.1;
+    return exactResult.removedArea <= tinyTrimThreshold ? sampledResult : exactResult;
+  }
+
+  const conservativeTolerance = Math.max(0.12, sampledResult.removedArea * 0.28);
+  if (exactResult.removedArea - sampledResult.removedArea > conservativeTolerance) {
+    return sampledResult;
+  }
+
+  return exactResult;
 };
 
 export const Toolbar: React.FC = () => {
@@ -1438,7 +1634,7 @@ export const Toolbar: React.FC = () => {
                     <div className="mt-2 flex items-end justify-between gap-2">
                       <div>
                         <div className="text-[11px] text-cyan-100/80">
-                          {stressScenario === 'baseline' ? 'Integrity Grade' : 'Scenario Grade'}
+                          {stressScenario === 'baseline' ? 'Build Grade' : 'Scenario Grade'}
                         </div>
                         <div className={`text-2xl font-semibold ${stressGradeToneClass}`}>
                           {structuralReport.stress.grade}
@@ -1446,7 +1642,7 @@ export const Toolbar: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <div className="text-[11px] text-cyan-100/80">
-                          {stressScenario === 'baseline' ? 'Stability Index' : 'Stress Score'}
+                          {stressScenario === 'baseline' ? 'Service Score' : 'Stress Score'}
                         </div>
                         <div className="font-mono text-lg text-cyan-100">{stressPercent}%</div>
                       </div>
@@ -1508,7 +1704,7 @@ export const Toolbar: React.FC = () => {
                       <span>Strong</span>
                     </div>
                     <div className="mt-1 text-[10px] font-mono text-cyan-200/80">
-                      Heat map: red = high risk, amber = moderate, cyan = reinforced.
+                      Heat map: red = highest demand vs span/support limits, cyan = lowest demand.
                     </div>
                     <div className="mt-1 text-[10px] text-cyan-100/80">
                       {structuralReport.stress.description}
@@ -1560,9 +1756,12 @@ export const Toolbar: React.FC = () => {
                       </div>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-cyan-100/80">
+                      <div>Worst Deflection: {structuralReport.stats.worstDeflectionIn.toFixed(2)} in</div>
+                      <div>Deflection Ratio: {structuralReport.stats.worstDeflectionRatio.toFixed(2)}x</div>
+                      <div>Bending Ratio: {structuralReport.stats.worstBendingRatio.toFixed(2)}x</div>
+                      <div>Column Ratio: {structuralReport.stats.worstAxialRatio.toFixed(2)}x</div>
+                      <div>Rack Ratio: {structuralReport.stats.worstRackRatio.toFixed(2)}x</div>
                       <div>Support Coverage: {(structuralReport.stats.supportCoverage * 100).toFixed(0)}%</div>
-                      <div>Symmetry Index: {(structuralReport.stats.symmetryScore * 100).toFixed(0)}%</div>
-                      <div>Fastener Engagement: {(structuralReport.stats.fastenerEngagement * 100).toFixed(0)}%</div>
                     </div>
                   </div>
                 </div>

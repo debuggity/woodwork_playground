@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { PartData } from './types';
 
 type Axis = 'x' | 'y' | 'z';
@@ -23,6 +24,38 @@ type ContactEdge = {
   area: number;
 };
 
+type SupportPatch = {
+  xMin: number;
+  xMax: number;
+  zMin: number;
+  zMax: number;
+  area: number;
+  belowId?: string;
+};
+
+type OrientedFrame = {
+  center: THREE.Vector3;
+  half: [number, number, number];
+  axes: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
+};
+
+type PartMode = 'beam' | 'panel' | 'column' | 'joint' | 'general';
+
+type PartDiagnostics = {
+  mode: PartMode;
+  governingAxis: Axis;
+  supportAdequacy: number;
+  deflectionIn: number;
+  deflectionRatio: number;
+  bendingStressPsi: number;
+  bendingRatio: number;
+  axialLoadLb: number;
+  axialRatio: number;
+  rackRatio: number;
+  totalLoadLb: number;
+  recommendation: string;
+};
+
 export type StructuralPoint = {
   x: number;
   y: number;
@@ -37,6 +70,7 @@ export type StructuralPartField = {
   loadPoints: StructuralPoint[];
   fastenerPoints: StructuralPoint[];
   primarySpanAxis: Axis;
+  memberMode: PartMode;
 };
 
 export type StructuralReport = {
@@ -76,6 +110,11 @@ export type StructuralReport = {
     modelHeightIn: number;
     centerOfMassHeightIn: number;
     symmetryScore: number;
+    worstDeflectionIn: number;
+    worstDeflectionRatio: number;
+    worstBendingRatio: number;
+    worstAxialRatio: number;
+    worstRackRatio: number;
   };
 };
 
@@ -84,6 +123,95 @@ const CONTACT_TOLERANCE = 0.22;
 const MIN_OVERLAP = 0.08;
 const MIN_CONTACT_AREA = 0.05;
 const GROUND_TOLERANCE = 0.18;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+const GENERIC_MATERIAL = {
+  lumber: {
+    densityPcf: 35,
+    modulusPsi: 1_200_000,
+    bendingAllowPsi: 900,
+    compressionAllowPsi: 1_150,
+  },
+  sheet: {
+    densityPcf: 34,
+    modulusPsi: 1_000_000,
+    bendingAllowPsi: 2_500,
+    compressionAllowPsi: 900,
+  },
+} as const;
+
+type StressProfile = {
+  id: StressScenario;
+  label: string;
+  description: string;
+  addedVerticalPsF: number;
+  lateralFactor: number;
+  torsionFactor: number;
+  impactPointLoadLb: number;
+};
+
+const STRESS_PROFILES: Record<StressScenario, StressProfile> = {
+  baseline: {
+    id: 'baseline',
+    label: 'Baseline',
+    description: 'Dead load plus stacked part load transfer. Best for checking sag, span, and support quality.',
+    addedVerticalPsF: 8,
+    lateralFactor: 0.08,
+    torsionFactor: 0.04,
+    impactPointLoadLb: 0,
+  },
+  'vertical-load': {
+    id: 'vertical-load',
+    label: 'Vertical Load',
+    description: 'Adds realistic top-down live load to expose lumber bending and plywood sag.',
+    addedVerticalPsF: 120,
+    lateralFactor: 0.12,
+    torsionFactor: 0.08,
+    impactPointLoadLb: 0,
+  },
+  'lateral-rack': {
+    id: 'lateral-rack',
+    label: 'Side Racking',
+    description: 'Checks tall unsupported frames for sway and poor bracing under side load.',
+    addedVerticalPsF: 30,
+    lateralFactor: 0.3,
+    torsionFactor: 0.1,
+    impactPointLoadLb: 0,
+  },
+  'torsion-twist': {
+    id: 'torsion-twist',
+    label: 'Twist Torque',
+    description: 'Applies eccentric top loading to expose uneven support and torsional twist risk.',
+    addedVerticalPsF: 55,
+    lateralFactor: 0.18,
+    torsionFactor: 0.26,
+    impactPointLoadLb: 0,
+  },
+  'impact-burst': {
+    id: 'impact-burst',
+    label: 'Impact Burst',
+    description: 'Adds a concentrated point load to highlight brittle local spans and poorly supported panels.',
+    addedVerticalPsF: 35,
+    lateralFactor: 0.14,
+    torsionFactor: 0.1,
+    impactPointLoadLb: 180,
+  },
+};
+
+export const STRESS_SCENARIO_OPTIONS = Object.values(STRESS_PROFILES).map((profile) => ({
+  id: profile.id,
+  label: profile.label,
+  description: profile.description,
+}));
+
+const HEAT_STOPS: Array<{ t: number; color: string }> = [
+  { t: 0, color: '#dc2626' },
+  { t: 0.22, color: '#f97316' },
+  { t: 0.42, color: '#facc15' },
+  { t: 0.64, color: '#84cc16' },
+  { t: 0.82, color: '#10b981' },
+  { t: 1, color: '#06b6d4' },
+];
 
 const clamp = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) return min;
@@ -97,6 +225,7 @@ const gap = (aMin: number, aMax: number, bMin: number, bMax: number) =>
   Math.max(0, Math.max(aMin - bMax, bMin - aMax));
 
 const midpoint = (a: number, b: number) => (a + b) / 2;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 const hexToRgb = (hex: string): [number, number, number] => {
   const normalized = hex.replace('#', '');
@@ -108,93 +237,12 @@ const hexToRgb = (hex: string): [number, number, number] => {
 };
 
 const rgbToHex = (r: number, g: number, b: number) =>
-  `#${[r, g, b]
-    .map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0'))
-    .join('')}`;
-
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-type StressProfile = {
-  id: StressScenario;
-  label: string;
-  description: string;
-  verticalLoad: number;
-  lateralLoad: number;
-  torsionLoad: number;
-  impactLoad: number;
-};
-
-const STRESS_PROFILES: Record<StressScenario, StressProfile> = {
-  baseline: {
-    id: 'baseline',
-    label: 'Baseline',
-    description: 'Normal workshop usage with no simulated extreme force.',
-    verticalLoad: 0,
-    lateralLoad: 0,
-    torsionLoad: 0,
-    impactLoad: 0,
-  },
-  'vertical-load': {
-    id: 'vertical-load',
-    label: 'Vertical Load',
-    description: 'Heavy top-down weight to reveal sag and support distribution.',
-    verticalLoad: 1,
-    lateralLoad: 0.2,
-    torsionLoad: 0.1,
-    impactLoad: 0,
-  },
-  'lateral-rack': {
-    id: 'lateral-rack',
-    label: 'Side Racking',
-    description: 'Sideways force to test wobble, bracing, and joint stiffness.',
-    verticalLoad: 0.2,
-    lateralLoad: 1,
-    torsionLoad: 0.35,
-    impactLoad: 0.15,
-  },
-  'torsion-twist': {
-    id: 'torsion-twist',
-    label: 'Twist Torque',
-    description: 'Opposing corner torque to expose torsional weak zones.',
-    verticalLoad: 0.3,
-    lateralLoad: 0.45,
-    torsionLoad: 1,
-    impactLoad: 0.1,
-  },
-  'impact-burst': {
-    id: 'impact-burst',
-    label: 'Impact Burst',
-    description: 'Sudden localized shock load to reveal brittle joints and stress spikes.',
-    verticalLoad: 0.4,
-    lateralLoad: 0.5,
-    torsionLoad: 0.25,
-    impactLoad: 1,
-  },
-};
-
-export const STRESS_SCENARIO_OPTIONS = (
-  Object.values(STRESS_PROFILES).map((profile) => ({
-    id: profile.id,
-    label: profile.label,
-    description: profile.description,
-  }))
-);
-
-const HEAT_STOPS: Array<{ t: number; color: string }> = [
-  { t: 0, color: '#dc2626' },
-  { t: 0.16, color: '#f97316' },
-  { t: 0.34, color: '#facc15' },
-  { t: 0.58, color: '#84cc16' },
-  { t: 0.78, color: '#10b981' },
-  { t: 1, color: '#06b6d4' },
-];
+  `#${[r, g, b].map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0')).join('')}`;
 
 const applyHeatContrast = (value: number) => {
   const t = clamp(value, 0, 1);
-  if (t < 0.5) {
-    return 0.5 * Math.pow(t / 0.5, 1.28);
-  }
-  return 1 - 0.5 * Math.pow((1 - t) / 0.5, 1.28);
+  if (t < 0.5) return 0.5 * Math.pow(t / 0.5, 1.25);
+  return 1 - 0.5 * Math.pow((1 - t) / 0.5, 1.25);
 };
 
 export const getStructuralHeatColor = (score: number) => {
@@ -212,60 +260,65 @@ export const getStructuralHeatColor = (score: number) => {
   return HEAT_STOPS[HEAT_STOPS.length - 1].color;
 };
 
-const getBounds = (part: PartData): Bounds3 => {
-  const [w, h, d] = part.dimensions;
-  const halfW = w / 2;
-  const halfH = h / 2;
-  const halfD = d / 2;
+const getGrade = (score: number) => {
+  if (score >= 0.93) return 'A';
+  if (score >= 0.84) return 'B';
+  if (score >= 0.72) return 'C';
+  if (score >= 0.58) return 'D';
+  return 'F';
+};
 
-  const sx = Math.sin(part.rotation[0]);
-  const cx = Math.cos(part.rotation[0]);
-  const sy = Math.sin(part.rotation[1]);
-  const cy = Math.cos(part.rotation[1]);
-  const sz = Math.sin(part.rotation[2]);
-  const cz = Math.cos(part.rotation[2]);
-
-  const rotate = (x: number, y: number, z: number) => {
-    let rx = x;
-    let ry = y;
-    let rz = z;
-
-    const y1 = ry * cx - rz * sx;
-    const z1 = ry * sx + rz * cx;
-    ry = y1;
-    rz = z1;
-
-    const x2 = rx * cy + rz * sy;
-    const z2 = -rx * sy + rz * cy;
-    rx = x2;
-    rz = z2;
-
-    const x3 = rx * cz - ry * sz;
-    const y3 = rx * sz + ry * cz;
-    rx = x3;
-    ry = y3;
-
-    return [rx + part.position[0], ry + part.position[1], rz + part.position[2]] as const;
-  };
-
-  const corners = [
-    rotate(halfW, halfH, halfD),
-    rotate(halfW, halfH, -halfD),
-    rotate(halfW, -halfH, halfD),
-    rotate(halfW, -halfH, -halfD),
-    rotate(-halfW, halfH, halfD),
-    rotate(-halfW, halfH, -halfD),
-    rotate(-halfW, -halfH, halfD),
-    rotate(-halfW, -halfH, -halfD),
-  ];
-
+const buildOrientedFrame = (part: PartData): OrientedFrame => {
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(part.rotation[0], part.rotation[1], part.rotation[2], 'XYZ')
+  );
   return {
-    minX: Math.min(...corners.map((c) => c[0])),
-    maxX: Math.max(...corners.map((c) => c[0])),
-    minY: Math.min(...corners.map((c) => c[1])),
-    maxY: Math.max(...corners.map((c) => c[1])),
-    minZ: Math.min(...corners.map((c) => c[2])),
-    maxZ: Math.max(...corners.map((c) => c[2])),
+    center: new THREE.Vector3(...part.position),
+    half: [part.dimensions[0] / 2, part.dimensions[1] / 2, part.dimensions[2] / 2],
+    axes: [
+      new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize(),
+      new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion).normalize(),
+      new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize(),
+    ],
+  };
+};
+
+const toFrameLocal = (frame: OrientedFrame, worldPoint: THREE.Vector3) => {
+  const delta = worldPoint.clone().sub(frame.center);
+  return new THREE.Vector3(
+    delta.dot(frame.axes[0]),
+    delta.dot(frame.axes[1]),
+    delta.dot(frame.axes[2])
+  );
+};
+
+const getWorldCorners = (frame: OrientedFrame) => {
+  const [hx, hy, hz] = frame.half;
+  const corners: THREE.Vector3[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        corners.push(
+          frame.center.clone()
+            .add(frame.axes[0].clone().multiplyScalar(sx * hx))
+            .add(frame.axes[1].clone().multiplyScalar(sy * hy))
+            .add(frame.axes[2].clone().multiplyScalar(sz * hz))
+        );
+      }
+    }
+  }
+  return corners;
+};
+
+const getBounds = (part: PartData): Bounds3 => {
+  const corners = getWorldCorners(buildOrientedFrame(part));
+  return {
+    minX: Math.min(...corners.map((c) => c.x)),
+    maxX: Math.max(...corners.map((c) => c.x)),
+    minY: Math.min(...corners.map((c) => c.y)),
+    maxY: Math.max(...corners.map((c) => c.y)),
+    minZ: Math.min(...corners.map((c) => c.z)),
+    maxZ: Math.max(...corners.map((c) => c.z)),
   };
 };
 
@@ -273,7 +326,6 @@ const getContactEdge = (a: Bounds3, b: Bounds3): ContactEdge | null => {
   const overlapX = overlap(a.minX, a.maxX, b.minX, b.maxX);
   const overlapY = overlap(a.minY, a.maxY, b.minY, b.maxY);
   const overlapZ = overlap(a.minZ, a.maxZ, b.minZ, b.maxZ);
-
   const gapX = gap(a.minX, a.maxX, b.minX, b.maxX);
   const gapY = gap(a.minY, a.maxY, b.minY, b.maxY);
   const gapZ = gap(a.minZ, a.maxZ, b.minZ, b.maxZ);
@@ -291,172 +343,238 @@ const getContactEdge = (a: Bounds3, b: Bounds3): ContactEdge | null => {
 
   if (candidates.length === 0) return null;
   candidates.sort((lhs, rhs) => rhs.area - lhs.area);
-  const best = candidates[0];
-  return best.area >= MIN_CONTACT_AREA ? best : null;
+  return candidates[0].area >= MIN_CONTACT_AREA ? candidates[0] : null;
 };
 
-const getGrade = (score: number) => {
-  if (score >= 0.9) return 'A+';
-  if (score >= 0.82) return 'A';
-  if (score >= 0.72) return 'B';
-  if (score >= 0.6) return 'C';
-  if (score >= 0.45) return 'D';
-  return 'F';
+const getPartMaterial = (part: PartData) =>
+  part.type === 'sheet' ? GENERIC_MATERIAL.sheet : GENERIC_MATERIAL.lumber;
+
+const getPartWeightLb = (part: PartData) => {
+  const volumeFt3 = (part.dimensions[0] * part.dimensions[1] * part.dimensions[2]) / 1728;
+  return volumeFt3 * getPartMaterial(part).densityPcf;
 };
 
-const hashString = (value: string) => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) - hash) + value.charCodeAt(i);
-    hash |= 0;
+const normalizeRiskToScore = (risk: number) => clamp(1 - clamp(risk, 0, 1.5) / 1.5, 0, 1);
+const areaLoadToTotalLoad = (psf: number, areaSqIn: number) => (psf / 144) * areaSqIn;
+
+const calcRectSection = (breadthIn: number, depthIn: number) => {
+  const breadth = Math.max(breadthIn, 0.1);
+  const depth = Math.max(depthIn, 0.1);
+  const inertia = (breadth * Math.pow(depth, 3)) / 12;
+  const sectionModulus = (breadth * Math.pow(depth, 2)) / 6;
+  const area = breadth * depth;
+  const radius = Math.sqrt(inertia / Math.max(area, EPS));
+  return { inertia, sectionModulus, area, radius };
+};
+
+const computeSupportAdequacy = (span: number, supportCoords: number[], halfSpan: number) => {
+  if (span <= 0.5) return 1;
+  if (supportCoords.length === 0) return 0.05;
+  const sorted = [...supportCoords].sort((a, b) => a - b);
+  const outerCoverage = clamp((sorted[sorted.length - 1] - sorted[0]) / Math.max(span, EPS), 0, 1);
+  const edgeProximity = clamp(
+    1 - ((Math.abs(sorted[0] + halfSpan) + Math.abs(sorted[sorted.length - 1] - halfSpan)) / Math.max(span, EPS)),
+    0,
+    1
+  );
+  const countBonus = clamp(Math.log2(sorted.length + 1) / 2.5, 0, 1) * 0.25;
+  return clamp(outerCoverage * 0.5 + edgeProximity * 0.25 + countBonus, 0, 1);
+};
+
+const estimateBeamSpan = (
+  length: number,
+  halfLength: number,
+  supportCoords: number[]
+): { span: number; condition: 'continuous' | 'simple' | 'cantilever' | 'free'; adequacy: number } => {
+  if (length <= 0.5) return { span: 0, condition: 'continuous', adequacy: 1 };
+  if (supportCoords.length === 0) return { span: length, condition: 'free', adequacy: 0.05 };
+
+  const sorted = [...supportCoords].sort((a, b) => a - b);
+  const adequacy = computeSupportAdequacy(length, sorted, halfLength);
+  if (sorted.length >= 2 && sorted[sorted.length - 1] - sorted[0] >= length * 0.35) {
+    return { span: sorted[sorted.length - 1] - sorted[0], condition: 'simple', adequacy };
   }
-  return Math.abs(hash);
+
+  const lone = sorted[Math.floor(sorted.length / 2)];
+  return {
+    span: Math.max(Math.abs(-halfLength - lone), Math.abs(halfLength - lone)),
+    condition: 'cantilever',
+    adequacy,
+  };
 };
 
-const buildRecommendation = (
-  overallScore: number,
-  weakPartCount: number,
-  connectedGroups: number,
-  fastenerEngagement: number
+const beamUniformDeflection = (
+  totalLoadLb: number,
+  spanIn: number,
+  modulusPsi: number,
+  inertia: number,
+  condition: 'simple' | 'cantilever' | 'free'
 ) => {
-  if (connectedGroups > 1) {
-    return 'Multiple disconnected clusters found. Tie assemblies together before load-bearing use.';
+  if (spanIn <= EPS || inertia <= EPS) return 0;
+  const w = totalLoadLb / Math.max(spanIn, EPS);
+  if (condition === 'cantilever' || condition === 'free') {
+    return (w * Math.pow(spanIn, 4)) / (8 * modulusPsi * inertia);
   }
-  if (fastenerEngagement < 0.35 && overallScore < 0.8) {
-    return 'Low fastener engagement detected. Add screws that bridge across joint seams in weak zones.';
-  }
-  if (weakPartCount >= 3) {
-    return 'Several weak zones detected. Add braces and increase overlap where heat map is red/orange.';
-  }
-  if (weakPartCount > 0) {
-    return 'Mostly stable with localized weak zones. Reinforce highlighted pieces for better rigidity.';
-  }
-  if (overallScore >= 0.86) {
-    return 'Strong load path detected. Current design appears well braced for typical workshop use.';
-  }
-  return 'Moderate stability profile. Additional cross-bracing and fastener spread would improve confidence.';
+  return (5 * w * Math.pow(spanIn, 4)) / (384 * modulusPsi * inertia);
 };
 
-const buildStressRecommendation = (
-  profile: StressProfile,
-  stressScore: number,
-  weakPartCount: number,
-  fastenerEngagement: number
+const beamUniformBendingStress = (
+  totalLoadLb: number,
+  spanIn: number,
+  sectionModulus: number,
+  condition: 'simple' | 'cantilever' | 'free'
 ) => {
-  if (profile.id === 'baseline') {
-    return 'Baseline model only. Pick a stress scenario to preview force-specific weak zones.';
-  }
-  if (stressScore >= 0.82) {
-    return `Performs strongly under ${profile.label.toLowerCase()}. Current bracing pattern is handling this load well.`;
-  }
-  if (stressScore >= 0.65) {
-    return `Moderate under ${profile.label.toLowerCase()}. Add a brace near warm zones to improve stiffness.`;
-  }
-  if (fastenerEngagement < 0.34) {
-    return `Weak under ${profile.label.toLowerCase()}. Increase seam-bridging screw count before heavier use.`;
-  }
-  if (weakPartCount >= 3) {
-    return `Several hotspots under ${profile.label.toLowerCase()}. Reinforce red/orange zones first.`;
-  }
-  return `High-risk behavior under ${profile.label.toLowerCase()}. Add support points and shorten unsupported spans.`;
+  if (spanIn <= EPS || sectionModulus <= EPS) return 0;
+  const w = totalLoadLb / Math.max(spanIn, EPS);
+  const maxMoment = condition === 'cantilever' || condition === 'free'
+    ? (w * Math.pow(spanIn, 2)) / 2
+    : (w * Math.pow(spanIn, 2)) / 8;
+  return maxMoment / sectionModulus;
 };
 
-const computeSupportPatternScore = (
-  bounds: Bounds3,
-  supports: StructuralPoint[],
-  grounded: boolean
+const pointLoadDeflection = (
+  pointLoadLb: number,
+  spanIn: number,
+  modulusPsi: number,
+  inertia: number,
+  condition: 'simple' | 'cantilever' | 'free'
 ) => {
-  if (supports.length === 0) {
-    return grounded ? 0.72 : 0.18;
+  if (spanIn <= EPS || inertia <= EPS || pointLoadLb <= EPS) return 0;
+  if (condition === 'cantilever' || condition === 'free') {
+    return (pointLoadLb * Math.pow(spanIn, 3)) / (3 * modulusPsi * inertia);
   }
-
-  const spanX = Math.max(bounds.maxX - bounds.minX, EPS);
-  const spanZ = Math.max(bounds.maxZ - bounds.minZ, EPS);
-  const footprintDiag = Math.hypot(spanX, spanZ);
-  const normalize = Math.max(footprintDiag * 0.46, 0.7);
-
-  const sampleXs = [0.12, 0.32, 0.5, 0.68, 0.88].map((t) => lerp(bounds.minX, bounds.maxX, t));
-  const sampleZs = [0.12, 0.32, 0.5, 0.68, 0.88].map((t) => lerp(bounds.minZ, bounds.maxZ, t));
-
-  let weightedDistance = 0;
-  let totalWeight = 0;
-  sampleXs.forEach((x) => {
-    sampleZs.forEach((z) => {
-      const nearest = supports.reduce((best, point) => {
-        const d = Math.hypot(x - point.x, z - point.z);
-        return Math.min(best, d);
-      }, Number.POSITIVE_INFINITY);
-
-      const edgeX = Math.min(Math.abs(x - bounds.minX), Math.abs(bounds.maxX - x)) / spanX;
-      const edgeZ = Math.min(Math.abs(z - bounds.minZ), Math.abs(bounds.maxZ - z)) / spanZ;
-      const centerBias = 1 + (1 - Math.min(edgeX, edgeZ) * 2) * 0.7;
-      weightedDistance += nearest * centerBias;
-      totalWeight += centerBias;
-    });
-  });
-
-  const avgDistance = weightedDistance / Math.max(totalWeight, EPS);
-  const distribution = clamp(1 - avgDistance / normalize, 0, 1);
-  const countBonus = clamp(Math.log2(supports.length + 1) / 3, 0, 1) * 0.22;
-  return clamp(distribution + countBonus, 0, 1);
+  return (pointLoadLb * Math.pow(spanIn, 3)) / (48 * modulusPsi * inertia);
 };
 
-const dedupeSortedValues = (values: number[], tolerance = 0.04) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const unique: number[] = [];
-  sorted.forEach((value) => {
-    if (unique.length === 0 || Math.abs(unique[unique.length - 1] - value) > tolerance) {
-      unique.push(value);
-    }
-  });
-  return unique;
+const pointLoadBendingStress = (
+  pointLoadLb: number,
+  spanIn: number,
+  sectionModulus: number,
+  condition: 'simple' | 'cantilever' | 'free'
+) => {
+  if (spanIn <= EPS || sectionModulus <= EPS || pointLoadLb <= EPS) return 0;
+  const maxMoment = condition === 'cantilever' || condition === 'free'
+    ? pointLoadLb * spanIn
+    : (pointLoadLb * spanIn) / 4;
+  return maxMoment / sectionModulus;
 };
 
 const buildPatchSamples = (min: number, max: number) => {
   const span = Math.max(max - min, 0);
   const center = midpoint(min, max);
-  if (span <= 0.12) {
-    return [center];
-  }
+  if (span <= 0.12) return [center];
   const inset = Math.min(span * 0.24, 0.7);
-  return dedupeSortedValues([min + inset, center, max - inset]);
+  return [min + inset, center, max - inset];
 };
 
 const pushDistributedPatchPoints = (
   target: Map<string, StructuralPoint[]>,
   partId: string,
-  patch: { xMin: number; xMax: number; zMin: number; zMax: number },
+  patch: SupportPatch,
   y: number,
   baseIntensity: number
 ) => {
-  const xSpan = Math.max(patch.xMax - patch.xMin, 0);
-  const zSpan = Math.max(patch.zMax - patch.zMin, 0);
   const xs = buildPatchSamples(patch.xMin, patch.xMax);
   const zs = buildPatchSamples(patch.zMin, patch.zMax);
-  const points: Array<{ x: number; z: number; weight: number }> = [];
+  const list = target.get(partId) ?? [];
   const centerX = midpoint(patch.xMin, patch.xMax);
   const centerZ = midpoint(patch.zMin, patch.zMax);
-  const halfX = Math.max(xSpan / 2, EPS);
-  const halfZ = Math.max(zSpan / 2, EPS);
+  const halfX = Math.max((patch.xMax - patch.xMin) / 2, EPS);
+  const halfZ = Math.max((patch.zMax - patch.zMin) / 2, EPS);
 
   xs.forEach((x) => {
     zs.forEach((z) => {
       const radial = Math.hypot((x - centerX) / halfX, (z - centerZ) / halfZ);
-      const weight = clamp(1 - radial * 0.22, 0.72, 1);
-      points.push({ x, z, weight });
+      list.push({
+        x,
+        y,
+        z,
+        intensity: clamp(baseIntensity * clamp(1 - radial * 0.22, 0.72, 1), 0.12, 1),
+      });
     });
   });
 
-  const list = target.get(partId) ?? [];
-  points.forEach((point) => {
-    list.push({
-      x: point.x,
-      y,
-      z: point.z,
-      intensity: clamp(baseIntensity * point.weight, 0.12, 1),
+  target.set(partId, list);
+};
+
+const projectSupportCoords = (frame: OrientedFrame, patches: SupportPatch[]) => {
+  const supportXs: number[] = [];
+  const supportZs: number[] = [];
+
+  patches.forEach((patch) => {
+    const samplePoints = [
+      new THREE.Vector3(patch.xMin, frame.center.y - frame.half[1], patch.zMin),
+      new THREE.Vector3(patch.xMax, frame.center.y - frame.half[1], patch.zMin),
+      new THREE.Vector3(patch.xMin, frame.center.y - frame.half[1], patch.zMax),
+      new THREE.Vector3(patch.xMax, frame.center.y - frame.half[1], patch.zMax),
+      new THREE.Vector3(midpoint(patch.xMin, patch.xMax), frame.center.y - frame.half[1], midpoint(patch.zMin, patch.zMax)),
+    ];
+
+    samplePoints.forEach((point) => {
+      const local = toFrameLocal(frame, point);
+      supportXs.push(local.x);
+      supportZs.push(local.z);
     });
   });
-  target.set(partId, list);
+
+  return { supportXs, supportZs };
+};
+
+const buildFloorPatch = (bounds: Bounds3): SupportPatch => ({
+  xMin: bounds.minX,
+  xMax: bounds.maxX,
+  zMin: bounds.minZ,
+  zMax: bounds.maxZ,
+  area: Math.max((bounds.maxX - bounds.minX) * (bounds.maxZ - bounds.minZ), EPS),
+});
+
+const buildRecommendation = (
+  overallScore: number,
+  connectedGroups: number,
+  worst: PartDiagnostics | null,
+  weakPartCount: number
+) => {
+  if (connectedGroups > 1) {
+    return 'Separate assemblies are not tied together. Connect load paths before trusting any stress grade.';
+  }
+  if (!worst) {
+    return overallScore >= 0.8
+      ? 'No major demand spikes detected under the current assumptions.'
+      : 'Model has limited support information. Add clearer bearing surfaces and rerun analysis.';
+  }
+  if (worst.deflectionRatio > 1.1) {
+    return `Serviceability is failing first: shorten unsupported spans or add a support under the worst ${worst.mode}.`;
+  }
+  if (worst.bendingRatio > 1) {
+    return 'Bending demand is too high on at least one member. Increase section depth or reduce span.';
+  }
+  if (worst.axialRatio > 1) {
+    return 'A vertical member is overloaded or too slender. Add bracing or use a larger post section.';
+  }
+  if (worst.rackRatio > 1) {
+    return 'Lateral racking is the weak mode. Add diagonal bracing, shear panels, or tie members together better.';
+  }
+  if (weakPartCount > 0) {
+    return 'Most members are acceptable, but a few highlighted parts still need better support or shorter spans.';
+  }
+  return 'Current layout looks reasonable for the modeled loads. Check the worst-span metrics before building full scale.';
+};
+
+const buildStressRecommendation = (profile: StressProfile, worst: PartDiagnostics | null) => {
+  if (!worst) return 'Add wood parts to evaluate load path and member demand.';
+  if (profile.id === 'baseline') return worst.recommendation;
+  if (profile.id === 'vertical-load') {
+    return worst.deflectionRatio >= worst.bendingRatio
+      ? 'Vertical-load check is dominated by sag. Add intermediate support or use a deeper member.'
+      : 'Vertical-load check is bending-limited. Increase section depth or reduce tributary load.';
+  }
+  if (profile.id === 'lateral-rack') {
+    return 'Use this mode to judge sway, not vertical sag. If the frame grades poorly here, add diagonal bracing or a shear panel.';
+  }
+  if (profile.id === 'torsion-twist') {
+    return 'Twist sensitivity usually means uneven support or off-center loading. Tie corners together and support both sides of wide tops.';
+  }
+  return 'Impact mode highlights brittle local spans. Spread concentrated loads and avoid long unsupported thin panels.';
 };
 
 export const analyzeStructuralIntegrity = (
@@ -465,7 +583,8 @@ export const analyzeStructuralIntegrity = (
 ): StructuralReport => {
   const scenario = options.stressScenario ?? 'baseline';
   const stressIntensity = clamp(options.stressIntensity ?? 0.6, 0, 1);
-  const stressProfile = STRESS_PROFILES[scenario] ?? STRESS_PROFILES.baseline;
+  const profile = STRESS_PROFILES[scenario] ?? STRESS_PROFILES.baseline;
+
   const woodParts = parts.filter((part) => part.type !== 'hardware');
   const hardwareParts = parts.filter((part) => part.type === 'hardware');
   const fastenerParts = hardwareParts.filter((part) => part.hardwareKind === 'fastener');
@@ -474,15 +593,15 @@ export const analyzeStructuralIntegrity = (
   const emptyReport: StructuralReport = {
     overallScore: 0,
     grade: 'N/A',
-    recommendation: 'Add parts to run structural analysis.',
+    recommendation: 'Add wood parts to run structural analysis.',
     stress: {
-      scenario: stressProfile.id,
-      label: stressProfile.label,
-      description: stressProfile.description,
+      scenario: profile.id,
+      label: profile.label,
+      description: profile.description,
       intensity: stressIntensity,
       score: 0,
       grade: 'N/A',
-      recommendation: 'Add parts to run structural stress simulation.',
+      recommendation: 'Add wood parts to run structural analysis.',
     },
     partScores: {},
     partFields: {},
@@ -508,36 +627,43 @@ export const analyzeStructuralIntegrity = (
       modelHeightIn: 0,
       centerOfMassHeightIn: 0,
       symmetryScore: 0,
+      worstDeflectionIn: 0,
+      worstDeflectionRatio: 0,
+      worstBendingRatio: 0,
+      worstAxialRatio: 0,
+      worstRackRatio: 0,
     },
   };
 
   if (woodParts.length === 0) return emptyReport;
 
   const boundsById = new Map<string, Bounds3>();
-  woodParts.forEach((part) => {
-    boundsById.set(part.id, getBounds(part));
-  });
-
+  const framesById = new Map<string, OrientedFrame>();
+  const partVolumeById = new Map<string, number>();
+  const partWeightLb = new Map<string, number>();
   const connections = new Map<string, ContactEdge[]>();
-  const supportArea = new Map<string, number>();
-  const fastenerLinks = new Map<string, number>();
-  const loadDemand = new Map<string, number>();
+  const supportPatches = new Map<string, SupportPatch[]>();
   const supportPoints = new Map<string, StructuralPoint[]>();
   const loadPoints = new Map<string, StructuralPoint[]>();
   const fastenerPoints = new Map<string, StructuralPoint[]>();
-  const verticalSupporters = new Map<string, Array<{
-    belowId: string;
-    area: number;
-    patch: { xMin: number; xMax: number; zMin: number; zMax: number };
-  }>>();
+  const fastenerLinks = new Map<string, number>();
+  const supportArea = new Map<string, number>();
+  const aboveLoadLb = new Map<string, number>();
+  const verticalSupporters = new Map<string, SupportPatch[]>();
+
   woodParts.forEach((part) => {
+    boundsById.set(part.id, getBounds(part));
+    framesById.set(part.id, buildOrientedFrame(part));
+    partVolumeById.set(part.id, Math.max(part.dimensions[0] * part.dimensions[1] * part.dimensions[2], EPS));
+    partWeightLb.set(part.id, getPartWeightLb(part));
     connections.set(part.id, []);
-    supportArea.set(part.id, 0);
-    fastenerLinks.set(part.id, 0);
-    loadDemand.set(part.id, 0);
+    supportPatches.set(part.id, []);
     supportPoints.set(part.id, []);
     loadPoints.set(part.id, []);
     fastenerPoints.set(part.id, []);
+    fastenerLinks.set(part.id, 0);
+    supportArea.set(part.id, 0);
+    aboveLoadLb.set(part.id, 0);
     verticalSupporters.set(part.id, []);
   });
 
@@ -562,37 +688,38 @@ export const analyzeStructuralIntegrity = (
       const verticalArea = overlapX * overlapZ;
       if (verticalArea < MIN_CONTACT_AREA) continue;
 
+      const patch: SupportPatch = {
+        xMin: Math.max(a.minX, b.minX),
+        xMax: Math.min(a.maxX, b.maxX),
+        zMin: Math.max(a.minZ, b.minZ),
+        zMax: Math.min(a.maxZ, b.maxZ),
+        area: verticalArea,
+      };
+
       if (Math.abs(a.minY - b.maxY) <= CONTACT_TOLERANCE) {
+        supportPatches.get(partA.id)?.push({ ...patch, belowId: partB.id });
+        verticalSupporters.get(partA.id)?.push({ ...patch, belowId: partB.id });
         supportArea.set(partA.id, (supportArea.get(partA.id) ?? 0) + verticalArea);
-        const patch = {
-          xMin: Math.max(a.minX, b.minX),
-          xMax: Math.min(a.maxX, b.maxX),
-          zMin: Math.max(a.minZ, b.minZ),
-          zMax: Math.min(a.maxZ, b.maxZ),
-        };
-        const supportIntensity = clamp(verticalArea / Math.max((partA.dimensions[0] * partA.dimensions[2]), EPS), 0.18, 1);
-        pushDistributedPatchPoints(supportPoints, partA.id, patch, a.minY, supportIntensity);
-        verticalSupporters.get(partA.id)?.push({
-          belowId: partB.id,
-          area: verticalArea,
+        pushDistributedPatchPoints(
+          supportPoints,
+          partA.id,
           patch,
-        });
+          a.minY,
+          clamp(verticalArea / Math.max(partA.dimensions[0] * partA.dimensions[2], EPS), 0.18, 1)
+        );
       }
+
       if (Math.abs(b.minY - a.maxY) <= CONTACT_TOLERANCE) {
+        supportPatches.get(partB.id)?.push({ ...patch, belowId: partA.id });
+        verticalSupporters.get(partB.id)?.push({ ...patch, belowId: partA.id });
         supportArea.set(partB.id, (supportArea.get(partB.id) ?? 0) + verticalArea);
-        const patch = {
-          xMin: Math.max(a.minX, b.minX),
-          xMax: Math.min(a.maxX, b.maxX),
-          zMin: Math.max(a.minZ, b.minZ),
-          zMax: Math.min(a.maxZ, b.maxZ),
-        };
-        const supportIntensity = clamp(verticalArea / Math.max((partB.dimensions[0] * partB.dimensions[2]), EPS), 0.18, 1);
-        pushDistributedPatchPoints(supportPoints, partB.id, patch, b.minY, supportIntensity);
-        verticalSupporters.get(partB.id)?.push({
-          belowId: partA.id,
-          area: verticalArea,
+        pushDistributedPatchPoints(
+          supportPoints,
+          partB.id,
           patch,
-        });
+          b.minY,
+          clamp(verticalArea / Math.max(partB.dimensions[0] * partB.dimensions[2], EPS), 0.18, 1)
+        );
       }
     }
   }
@@ -600,10 +727,10 @@ export const analyzeStructuralIntegrity = (
   fastenerParts.forEach((fastener) => {
     const fastenerBounds = getBounds(fastener);
     const touchedWoodIds: string[] = [];
+
     woodParts.forEach((woodPart) => {
       const woodBounds = boundsById.get(woodPart.id);
       if (!woodBounds) return;
-
       const ox = overlap(fastenerBounds.minX, fastenerBounds.maxX, woodBounds.minX, woodBounds.maxX);
       const oy = overlap(fastenerBounds.minY, fastenerBounds.maxY, woodBounds.minY, woodBounds.maxY);
       const oz = overlap(fastenerBounds.minZ, fastenerBounds.maxZ, woodBounds.minZ, woodBounds.maxZ);
@@ -614,66 +741,21 @@ export const analyzeStructuralIntegrity = (
     const uniqueTouched = [...new Set(touchedWoodIds)];
     if (uniqueTouched.length >= 2) {
       bridgingFasteners += 1;
-      uniqueTouched.forEach((partId) => {
-        fastenerLinks.set(partId, (fastenerLinks.get(partId) ?? 0) + 1);
-        const woodBounds = boundsById.get(partId);
-        if (!woodBounds) return;
-        const centerX = midpoint(
-          Math.max(fastenerBounds.minX, woodBounds.minX),
-          Math.min(fastenerBounds.maxX, woodBounds.maxX)
-        );
-        const centerY = midpoint(
-          Math.max(fastenerBounds.minY, woodBounds.minY),
-          Math.min(fastenerBounds.maxY, woodBounds.maxY)
-        );
-        const centerZ = midpoint(
-          Math.max(fastenerBounds.minZ, woodBounds.minZ),
-          Math.min(fastenerBounds.maxZ, woodBounds.maxZ)
-        );
-        fastenerPoints.get(partId)?.push({
-          x: centerX,
-          y: centerY,
-          z: centerZ,
-          intensity: 1,
-        });
-      });
-      return;
+      uniqueTouched.forEach((partId) => fastenerLinks.set(partId, (fastenerLinks.get(partId) ?? 0) + 1));
+    } else if (uniqueTouched.length === 1) {
+      fastenerLinks.set(uniqueTouched[0], (fastenerLinks.get(uniqueTouched[0]) ?? 0) + 0.3);
     }
-    if (uniqueTouched.length === 1) {
-      const partId = uniqueTouched[0];
-      fastenerLinks.set(partId, (fastenerLinks.get(partId) ?? 0) + 0.35);
-      const woodBounds = boundsById.get(partId);
-      if (woodBounds) {
-        const centerX = midpoint(
-          Math.max(fastenerBounds.minX, woodBounds.minX),
-          Math.min(fastenerBounds.maxX, woodBounds.maxX)
-        );
-        const centerY = midpoint(
-          Math.max(fastenerBounds.minY, woodBounds.minY),
-          Math.min(fastenerBounds.maxY, woodBounds.maxY)
-        );
-        const centerZ = midpoint(
-          Math.max(fastenerBounds.minZ, woodBounds.minZ),
-          Math.min(fastenerBounds.maxZ, woodBounds.maxZ)
-        );
-        fastenerPoints.get(partId)?.push({
-          x: centerX,
-          y: centerY,
-          z: centerZ,
-          intensity: 0.5,
-        });
-      }
-    }
-  });
 
-  const partById = new Map<string, PartData>();
-  const partVolumeById = new Map<string, number>();
-  const carriedLoad = new Map<string, number>();
-  woodParts.forEach((part) => {
-    partById.set(part.id, part);
-    const volume = Math.max(part.dimensions[0] * part.dimensions[1] * part.dimensions[2], EPS);
-    partVolumeById.set(part.id, volume);
-    carriedLoad.set(part.id, volume);
+    uniqueTouched.forEach((partId) => {
+      const woodBounds = boundsById.get(partId);
+      if (!woodBounds) return;
+      fastenerPoints.get(partId)?.push({
+        x: midpoint(Math.max(fastenerBounds.minX, woodBounds.minX), Math.min(fastenerBounds.maxX, woodBounds.maxX)),
+        y: midpoint(Math.max(fastenerBounds.minY, woodBounds.minY), Math.min(fastenerBounds.maxY, woodBounds.maxY)),
+        z: midpoint(Math.max(fastenerBounds.minZ, woodBounds.minZ), Math.min(fastenerBounds.maxZ, woodBounds.maxZ)),
+        intensity: uniqueTouched.length >= 2 ? 1 : 0.45,
+      });
+    });
   });
 
   const topDownParts = [...woodParts].sort((lhs, rhs) => {
@@ -685,45 +767,38 @@ export const analyzeStructuralIntegrity = (
   topDownParts.forEach((part) => {
     const supporters = verticalSupporters.get(part.id) ?? [];
     if (supporters.length === 0) return;
-    const totalSupportArea = supporters.reduce((sum, item) => sum + item.area, 0);
-    if (totalSupportArea <= EPS) return;
+    const totalArea = supporters.reduce((sum, patch) => sum + patch.area, 0);
+    if (totalArea <= EPS) return;
 
-    const carried = carriedLoad.get(part.id) ?? (partVolumeById.get(part.id) ?? EPS);
-    supporters.forEach((item) => {
-      const share = item.area / totalSupportArea;
-      const transferredLoad = carried * share;
-      loadDemand.set(item.belowId, (loadDemand.get(item.belowId) ?? 0) + transferredLoad);
-      carriedLoad.set(item.belowId, (carriedLoad.get(item.belowId) ?? 0) + transferredLoad);
-
-      const belowPart = partById.get(item.belowId);
-      const belowBounds = boundsById.get(item.belowId);
-      if (!belowPart || !belowBounds) return;
-      const belowVolume = partVolumeById.get(item.belowId) ?? EPS;
-      const localIntensity = clamp((transferredLoad / belowVolume) * 0.72, 0.08, 1);
+    const carried = (aboveLoadLb.get(part.id) ?? 0) + (partWeightLb.get(part.id) ?? 0);
+    supporters.forEach((patch) => {
+      if (!patch.belowId) return;
+      const transferred = carried * (patch.area / totalArea);
+      aboveLoadLb.set(patch.belowId, (aboveLoadLb.get(patch.belowId) ?? 0) + transferred);
+      const belowBounds = boundsById.get(patch.belowId);
+      if (!belowBounds) return;
       pushDistributedPatchPoints(
         loadPoints,
-        item.belowId,
-        item.patch,
+        patch.belowId,
+        patch,
         belowBounds.maxY,
-        localIntensity
+        clamp(transferred / Math.max((partWeightLb.get(patch.belowId) ?? 1) * 1.4, 1), 0.12, 1)
       );
     });
   });
 
   const adjacency = new Map<string, Set<string>>();
-  woodParts.forEach((part) => adjacency.set(part.id, new Set<string>()));
-  for (let i = 0; i < woodParts.length; i += 1) {
-    for (let j = i + 1; j < woodParts.length; j += 1) {
-      const partA = woodParts[i];
+  woodParts.forEach((part) => adjacency.set(part.id, new Set()));
+  woodParts.forEach((partA, index) => {
+    for (let j = index + 1; j < woodParts.length; j += 1) {
       const partB = woodParts[j];
       const a = boundsById.get(partA.id);
       const b = boundsById.get(partB.id);
-      if (!a || !b) continue;
-      if (!getContactEdge(a, b)) continue;
+      if (!a || !b || !getContactEdge(a, b)) continue;
       adjacency.get(partA.id)?.add(partB.id);
       adjacency.get(partB.id)?.add(partA.id);
     }
-  }
+  });
 
   let connectedGroups = 0;
   const visited = new Set<string>();
@@ -743,377 +818,332 @@ export const analyzeStructuralIntegrity = (
     }
   });
 
-  const partScores: Record<string, number> = {};
-  const partFields: Record<string, StructuralPartField> = {};
-  const weakPartIds: string[] = [];
-
-  const allComputedBounds = woodParts
-    .map((part) => boundsById.get(part.id))
-    .filter(Boolean) as Bounds3[];
-  const lowestSupportPlaneY = Math.min(...allComputedBounds.map((bounds) => bounds.minY));
-  const modelMinX = Math.min(...allComputedBounds.map((bounds) => bounds.minX));
-  const modelMaxX = Math.max(...allComputedBounds.map((bounds) => bounds.maxX));
-  const modelMinY = Math.min(...allComputedBounds.map((bounds) => bounds.minY));
-  const modelMaxY = Math.max(...allComputedBounds.map((bounds) => bounds.maxY));
-  const modelMinZ = Math.min(...allComputedBounds.map((bounds) => bounds.minZ));
-  const modelMaxZ = Math.max(...allComputedBounds.map((bounds) => bounds.maxZ));
+  const allBounds = woodParts.map((part) => boundsById.get(part.id)).filter(Boolean) as Bounds3[];
+  const modelMinX = Math.min(...allBounds.map((b) => b.minX));
+  const modelMaxX = Math.max(...allBounds.map((b) => b.maxX));
+  const modelMinY = Math.min(...allBounds.map((b) => b.minY));
+  const modelMaxY = Math.max(...allBounds.map((b) => b.maxY));
+  const modelMinZ = Math.min(...allBounds.map((b) => b.minZ));
+  const modelMaxZ = Math.max(...allBounds.map((b) => b.maxZ));
+  const modelHeightIn = Math.max(modelMaxY - modelMinY, 0);
   const modelCenterX = midpoint(modelMinX, modelMaxX);
   const modelCenterZ = midpoint(modelMinZ, modelMaxZ);
-  const modelSpanX = Math.max(modelMaxX - modelMinX, EPS);
-  const modelSpanY = Math.max(modelMaxY - modelMinY, EPS);
-  const modelSpanZ = Math.max(modelMaxZ - modelMinZ, EPS);
-  const modelRadius = Math.max(Math.hypot(modelSpanX * 0.5, modelSpanZ * 0.5), EPS);
+
+  const partScores: Record<string, number> = {};
+  const partFields: Record<string, StructuralPartField> = {};
+  const diagnosticsById = new Map<string, PartDiagnostics>();
+  const weakPartIds: string[] = [];
 
   let groundedParts = 0;
   let totalConnections = 0;
-  let totalSupportRatio = 0;
+  let totalSupportCoverage = 0;
+  let worstDeflectionIn = 0;
+  let worstDeflectionRatio = 0;
+  let worstBendingRatio = 0;
+  let worstAxialRatio = 0;
+  let worstRackRatio = 0;
+  let maxSpanIn = 0;
 
   woodParts.forEach((part) => {
     const bounds = boundsById.get(part.id);
-    if (!bounds) return;
+    const frame = framesById.get(part.id);
+    if (!bounds || !frame) return;
 
-    const spanX = Math.max(bounds.maxX - bounds.minX, EPS);
-    const spanY = Math.max(bounds.maxY - bounds.minY, EPS);
-    const spanZ = Math.max(bounds.maxZ - bounds.minZ, EPS);
-    const footprintArea = Math.max(spanX * spanZ, EPS);
-    const contactList = connections.get(part.id) ?? [];
-    totalConnections += contactList.length;
-
+    const supportPatchList = [...(supportPatches.get(part.id) ?? [])];
+    const footprintArea = Math.max((bounds.maxX - bounds.minX) * (bounds.maxZ - bounds.minZ), EPS);
     const floorGrounded = bounds.minY <= GROUND_TOLERANCE;
-    const externallySupported = bounds.minY <= lowestSupportPlaneY + 0.22;
-    const grounded = floorGrounded || externallySupported;
-    if (grounded) groundedParts += 1;
-
-    const rawSupportPoints = supportPoints.get(part.id) ?? [];
-    const supportPatternScore = computeSupportPatternScore(bounds, rawSupportPoints, grounded);
-
-    const baseSupport = floorGrounded
-      ? footprintArea * clamp((GROUND_TOLERANCE - bounds.minY) / GROUND_TOLERANCE + 0.42, 0.48, 1)
-      : externallySupported
-        ? footprintArea * 0.58
-        : 0;
-    const support = Math.min(footprintArea * 1.25, baseSupport + (supportArea.get(part.id) ?? 0));
-    const supportRatio = clamp(support / footprintArea, 0, 1);
-    totalSupportRatio += supportRatio;
-
-    const totalContactArea = contactList.reduce((sum, edge) => sum + edge.area, 0);
-    const connectionScore = clamp(totalContactArea / Math.max(footprintArea * 1.1, EPS), 0, 1);
-
-    const axisSet = new Set<Axis>();
-    contactList.forEach((edge) => axisSet.add(edge.axis));
-    const axisDiversity = axisSet.size === 0
-      ? 0
-      : axisSet.size === 1
-        ? 0.38
-        : axisSet.size === 2
-          ? 0.72
-          : 1;
-
-    const slenderness = Math.max(spanX, spanY, spanZ) / Math.max(Math.min(spanX, spanZ), 0.5);
-    const geometryScore = clamp(1 - (slenderness - 1) / 8, 0.12, 1);
-
-    const relativeHeight = spanY / Math.max(spanX + spanZ, 1);
-    const cantileverPenalty = !grounded && supportRatio < 0.36
-      ? clamp(relativeHeight * 0.14 + (0.36 - supportRatio) * 0.18, 0, 0.22)
-      : 0;
-    const screwSupport = clamp((fastenerLinks.get(part.id) ?? 0) / 2.5, 0, 1);
-    const ownVolume = Math.max(spanX * spanY * spanZ, EPS);
-    const loadRatio = clamp((loadDemand.get(part.id) ?? 0) / ownVolume, 0, 5);
-    const pressurePenalty = clamp((loadRatio - 1.05) * 0.045, 0, 0.14) * (1 - supportRatio * 0.68);
-
-    let score = (
-      supportRatio * 0.3
-      + supportPatternScore * 0.16
-      + connectionScore * 0.18
-      + axisDiversity * 0.1
-      + geometryScore * 0.1
-      + screwSupport * 0.14
-      + (grounded ? 0.09 : 0)
-      - cantileverPenalty
-      - pressurePenalty
-    );
-
-    if (!grounded && contactList.length === 0 && screwSupport < 0.2) {
-      score -= 0.22;
+    if (floorGrounded) {
+      groundedParts += 1;
+      const floorPatch = buildFloorPatch(bounds);
+      supportPatchList.push(floorPatch);
+      pushDistributedPatchPoints(supportPoints, part.id, floorPatch, bounds.minY, 0.55);
     }
 
+    const material = getPartMaterial(part);
+    const totalWeight = (partWeightLb.get(part.id) ?? 0) + (aboveLoadLb.get(part.id) ?? 0);
+    const planArea = Math.max(part.dimensions[0] * part.dimensions[2], EPS);
+    const topExposure = clamp((bounds.maxY - modelMinY) / Math.max(modelHeightIn, 1), 0, 1);
+    const horizontality = Math.abs(frame.axes[1].dot(WORLD_UP));
+    const verticality = Math.max(
+      Math.abs(frame.axes[0].dot(WORLD_UP)),
+      Math.abs(frame.axes[1].dot(WORLD_UP)),
+      Math.abs(frame.axes[2].dot(WORLD_UP))
+    );
+    const lateralHeight = Math.max(bounds.maxY - bounds.minY, 0.1);
+    const supportCoverage = clamp((supportArea.get(part.id) ?? 0) / footprintArea, 0, 1);
+    totalSupportCoverage += supportCoverage;
+
+    const scenarioVerticalLoad = horizontality >= 0.72
+      ? areaLoadToTotalLoad(profile.addedVerticalPsF * stressIntensity, planArea) * clamp(0.45 + topExposure * 0.75, 0.45, 1.2)
+      : 0;
+    const impactLoad = profile.impactPointLoadLb * stressIntensity * clamp(0.4 + topExposure * 0.6, 0, 1);
+    const { supportXs, supportZs } = projectSupportCoords(frame, supportPatchList);
+
+    const beamX = estimateBeamSpan(part.dimensions[0], frame.half[0], supportXs);
+    const beamZ = estimateBeamSpan(part.dimensions[2], frame.half[2], supportZs);
+    const sectionX = calcRectSection(part.dimensions[2], part.dimensions[1]);
+    const sectionZ = calcRectSection(part.dimensions[0], part.dimensions[1]);
+
+    const verticalLoadForBending = totalWeight + scenarioVerticalLoad;
+    const xDeflection = beamUniformDeflection(verticalLoadForBending, beamX.span, material.modulusPsi, sectionX.inertia, beamX.condition)
+      + pointLoadDeflection(impactLoad, beamX.span, material.modulusPsi, sectionX.inertia, beamX.condition);
+    const zDeflection = beamUniformDeflection(verticalLoadForBending, beamZ.span, material.modulusPsi, sectionZ.inertia, beamZ.condition)
+      + pointLoadDeflection(impactLoad, beamZ.span, material.modulusPsi, sectionZ.inertia, beamZ.condition);
+    const xBending = beamUniformBendingStress(verticalLoadForBending, beamX.span, sectionX.sectionModulus, beamX.condition)
+      + pointLoadBendingStress(impactLoad, beamX.span, sectionX.sectionModulus, beamX.condition);
+    const zBending = beamUniformBendingStress(verticalLoadForBending, beamZ.span, sectionZ.sectionModulus, beamZ.condition)
+      + pointLoadBendingStress(impactLoad, beamZ.span, sectionZ.sectionModulus, beamZ.condition);
+
+    const isSheetLike = part.type === 'sheet' || (horizontality >= 0.72 && part.dimensions[1] <= Math.min(part.dimensions[0], part.dimensions[2]) * 0.45);
+    const governingAxis: Axis = zDeflection > xDeflection ? 'z' : 'x';
+    const governingSpan = governingAxis === 'x' ? beamX.span : beamZ.span;
+    const governingDeflection = governingAxis === 'x' ? xDeflection : zDeflection;
+    const governingBending = governingAxis === 'x' ? xBending : zBending;
+    const governingSupportAdequacy = governingAxis === 'x' ? beamX.adequacy : beamZ.adequacy;
+    maxSpanIn = Math.max(maxSpanIn, governingSpan);
+
+    const deflectionLimitDivisor = isSheetLike ? 240 : 360;
+    const deflectionLimit = governingSpan > EPS ? governingSpan / deflectionLimitDivisor : 0.01;
+    const deflectionRatio = governingSpan > EPS ? governingDeflection / Math.max(deflectionLimit, 0.01) : 0;
+    const bendingRatio = governingBending / Math.max(material.bendingAllowPsi, 1);
+
+    const columnAxisIndex = (() => {
+      const dots = frame.axes.map((axis) => Math.abs(axis.dot(WORLD_UP)));
+      if (dots[0] >= dots[1] && dots[0] >= dots[2]) return 0;
+      if (dots[1] >= dots[2]) return 1;
+      return 2;
+    })();
+    const columnLength = part.dimensions[columnAxisIndex as 0 | 1 | 2];
+    const crossDims = [part.dimensions[0], part.dimensions[1], part.dimensions[2]].filter((_, idx) => idx !== columnAxisIndex);
+    const weakSection = calcRectSection(Math.min(...crossDims), Math.max(...crossDims));
+    const axialLoadLb = totalWeight + scenarioVerticalLoad * 0.25;
+    const eulerCapacity = (Math.PI * Math.PI * material.modulusPsi * weakSection.inertia) / Math.max(Math.pow(Math.max(columnLength, 0.1), 2), EPS);
+    const crushingCapacity = weakSection.area * material.compressionAllowPsi;
+    const axialRatio = axialLoadLb / Math.max(Math.min(crushingCapacity, eulerCapacity), 1);
+
+    const connectionCount = (connections.get(part.id) ?? []).length;
+    totalConnections += connectionCount;
+    const fastenerSupport = clamp((fastenerLinks.get(part.id) ?? 0) / 3, 0, 1);
     const centerX = midpoint(bounds.minX, bounds.maxX);
     const centerZ = midpoint(bounds.minZ, bounds.maxZ);
-    const radialNorm = clamp(
-      Math.hypot(centerX - modelCenterX, centerZ - modelCenterZ) / modelRadius,
-      0,
-      1
-    );
-    const topExposure = clamp((bounds.maxY - modelMinY) / modelSpanY, 0, 1);
-    const scenarioWeight = stressProfile.id === 'baseline'
-      ? 0
-      : clamp(0.4 + stressIntensity * 0.6, 0.4, 1);
+    const radialBias = clamp(Math.hypot(centerX - modelCenterX, centerZ - modelCenterZ) / Math.max(Math.hypot(modelMaxX - modelMinX, modelMaxZ - modelMinZ), 1), 0, 1);
+    const braceHelp = clamp(connectionCount / 4.5 + fastenerSupport * 0.35, 0, 1);
+    const rackDemand = profile.lateralFactor * stressIntensity * clamp(lateralHeight / Math.max(Math.min(modelMaxX - modelMinX, modelMaxZ - modelMinZ), 12), 0.2, 2.2);
+    const torsionDemand = profile.torsionFactor * stressIntensity * clamp(0.35 + radialBias * 0.9 + topExposure * 0.4, 0.35, 1.8);
+    const rackRatio = (rackDemand + torsionDemand) * (1 - clamp(governingSupportAdequacy * 0.5 + braceHelp * 0.5, 0, 1));
 
-    const verticalPenalty = stressProfile.verticalLoad
-      * scenarioWeight
-      * (0.13 + loadRatio * 0.05)
-      * (1 - supportRatio * 0.72);
-    const lateralPenalty = stressProfile.lateralLoad
-      * scenarioWeight
-      * (0.12 + relativeHeight * 0.08 + topExposure * 0.05)
-      * (1 - (axisDiversity * 0.5 + screwSupport * 0.26 + connectionScore * 0.24));
-    const torsionPenalty = stressProfile.torsionLoad
-      * scenarioWeight
-      * (0.1 + radialNorm * 0.1 + topExposure * 0.06)
-      * (1 - (supportPatternScore * 0.46 + screwSupport * 0.34 + axisDiversity * 0.2));
-    const impactPenalty = stressProfile.impactLoad
-      * scenarioWeight
-      * (0.08 + loadRatio * 0.05)
-      * (1 - (screwSupport * 0.42 + connectionScore * 0.34 + supportRatio * 0.24));
-    const stressPenalty = clamp(
-      verticalPenalty + lateralPenalty + torsionPenalty + impactPenalty,
-      0,
-      0.56
-    );
-    const resilience = clamp(
-      supportRatio * 0.36
-      + supportPatternScore * 0.25
-      + screwSupport * 0.2
-      + axisDiversity * 0.19,
-      0,
-      1
-    );
-    const stressBonus = stressProfile.id === 'baseline'
-      ? 0
-      : Math.max(0, resilience - 0.62) * scenarioWeight * 0.08;
-    score = score - stressPenalty + stressBonus;
+    const looksLikeLedger = horizontality >= 0.72
+      && part.type === 'lumber'
+      && Math.min(part.dimensions[0], part.dimensions[2]) <= 3
+      && connectionCount >= 2
+      && (supportCoverage >= 0.12 || fastenerSupport >= 0.35)
+      && totalWeight <= (partWeightLb.get(part.id) ?? 0) * 6;
+    const mode: PartMode = columnLength >= Math.max(part.dimensions[0], part.dimensions[2]) * 2.8 && verticality >= 0.82
+      ? 'column'
+      : isSheetLike
+        ? 'panel'
+        : looksLikeLedger
+          ? 'joint'
+          : horizontality >= 0.72
+            ? 'beam'
+            : connectionCount > 0
+              ? 'joint'
+              : 'general';
 
-    score = clamp(score, 0, 1);
-    partScores[part.id] = score;
+    let risk = 0;
+    if (mode === 'column') risk = Math.max(axialRatio, rackRatio * 0.95, deflectionRatio * 0.2);
+    else if (mode === 'panel') risk = Math.max(deflectionRatio * 1.2, bendingRatio * 0.95, rackRatio * 0.42);
+    else if (mode === 'beam') risk = Math.max(deflectionRatio * 0.9, bendingRatio, rackRatio * 0.4);
+    else if (mode === 'joint') risk = Math.max(bendingRatio * 0.45, axialRatio * 0.4, rackRatio * 0.7, deflectionRatio * 0.18);
+    else risk = Math.max(deflectionRatio * 0.55, bendingRatio * 0.55, axialRatio * 0.7, rackRatio);
 
-    if (score < 0.48) {
-      weakPartIds.push(part.id);
+    if (governingSupportAdequacy < 0.18) {
+      risk = Math.max(risk, 1.15 - governingSupportAdequacy * 0.5);
     }
 
-    const spanAxis: Axis = spanX >= spanZ ? 'x' : 'z';
-    const supportList = [...(supportPoints.get(part.id) ?? [])];
-    if (grounded && supportList.length === 0) {
-      supportList.push({
-        x: midpoint(bounds.minX, bounds.maxX),
-        y: bounds.minY,
+    const score = normalizeRiskToScore(risk);
+    partScores[part.id] = score;
+    if (score < 0.58) weakPartIds.push(part.id);
+
+    worstDeflectionIn = Math.max(worstDeflectionIn, governingDeflection);
+    worstDeflectionRatio = Math.max(worstDeflectionRatio, deflectionRatio);
+    worstBendingRatio = Math.max(worstBendingRatio, bendingRatio);
+    worstAxialRatio = Math.max(worstAxialRatio, axialRatio);
+    worstRackRatio = Math.max(worstRackRatio, rackRatio);
+
+    const recommendation = deflectionRatio >= 1
+      ? 'Span is too long for the current section and support spacing.'
+      : bendingRatio >= 1
+        ? 'Bending stress is above the conservative working limit.'
+        : axialRatio >= 1
+          ? 'Column/post is overloaded or too slender.'
+          : rackRatio >= 1
+            ? 'Part depends on weak lateral bracing.'
+            : governingSupportAdequacy < 0.4
+              ? 'Support spacing is poor even if the member has not failed the limit yet.'
+              : 'No major member-level issue detected.';
+
+    diagnosticsById.set(part.id, {
+      mode,
+      governingAxis,
+      supportAdequacy: governingSupportAdequacy,
+      deflectionIn: governingDeflection,
+      deflectionRatio,
+      bendingStressPsi: governingBending,
+      bendingRatio,
+      axialLoadLb,
+      axialRatio,
+      rackRatio,
+      totalLoadLb: verticalLoadForBending + impactLoad,
+      recommendation,
+    });
+
+    const partLoadPoints = [...(loadPoints.get(part.id) ?? [])];
+    const centerLoadIntensity = mode === 'panel'
+      ? clamp(Math.max(deflectionRatio * 1.15, bendingRatio, 0.24 + (1 - governingSupportAdequacy) * 0.28), 0.16, 1)
+      : clamp(Math.max(deflectionRatio, bendingRatio, axialRatio * 0.8, rackRatio * 0.9), 0.12, 1);
+    partLoadPoints.push({
+      x: midpoint(bounds.minX, bounds.maxX),
+      y: bounds.maxY,
+      z: midpoint(bounds.minZ, bounds.maxZ),
+      intensity: centerLoadIntensity,
+    });
+    if (mode === 'panel') {
+      partLoadPoints.push({
+        x: lerp(bounds.minX, bounds.maxX, 0.5),
+        y: bounds.maxY,
+        z: lerp(bounds.minZ, bounds.maxZ, 0.28),
+        intensity: clamp(centerLoadIntensity * 0.82, 0.14, 1),
+      });
+      partLoadPoints.push({
+        x: lerp(bounds.minX, bounds.maxX, 0.5),
+        y: bounds.maxY,
+        z: lerp(bounds.minZ, bounds.maxZ, 0.72),
+        intensity: clamp(centerLoadIntensity * 0.82, 0.14, 1),
+      });
+    }
+    if (profile.torsionFactor > 0 && stressIntensity > 0.01) {
+      partLoadPoints.push({
+        x: lerp(bounds.minX, bounds.maxX, 0.18),
+        y: bounds.maxY,
+        z: lerp(bounds.minZ, bounds.maxZ, 0.82),
+        intensity: clamp(profile.torsionFactor * stressIntensity * 1.1, 0.1, 1),
+      });
+      partLoadPoints.push({
+        x: lerp(bounds.minX, bounds.maxX, 0.82),
+        y: bounds.maxY,
+        z: lerp(bounds.minZ, bounds.maxZ, 0.18),
+        intensity: clamp(profile.torsionFactor * stressIntensity, 0.1, 1),
+      });
+    }
+    if (profile.lateralFactor > 0 && stressIntensity > 0.01) {
+      partLoadPoints.push({
+        x: centerX >= modelCenterX ? bounds.maxX : bounds.minX,
+        y: lerp(bounds.minY, bounds.maxY, 0.8),
         z: midpoint(bounds.minZ, bounds.maxZ),
-        intensity: 0.5,
+        intensity: clamp(profile.lateralFactor * stressIntensity * 1.2, 0.1, 1),
       });
     }
 
-    const scenarioLoadList: StructuralPoint[] = [];
-    if (stressProfile.id !== 'baseline') {
-      const heightBias = clamp(0.62 + topExposure * 0.52, 0.62, 1.25);
-      if (stressProfile.verticalLoad > 0) {
-        const vIntensity = clamp(
-          0.24 + stressProfile.verticalLoad * stressIntensity * heightBias * 0.62,
-          0.12,
-          1
-        );
-        scenarioLoadList.push({
-          x: midpoint(bounds.minX, bounds.maxX),
-          y: bounds.maxY,
-          z: midpoint(bounds.minZ, bounds.maxZ),
-          intensity: vIntensity,
-        });
-        scenarioLoadList.push({
-          x: lerp(bounds.minX, bounds.maxX, 0.22),
-          y: bounds.maxY,
-          z: lerp(bounds.minZ, bounds.maxZ, 0.22),
-          intensity: clamp(vIntensity * 0.7, 0.1, 1),
-        });
-        scenarioLoadList.push({
-          x: lerp(bounds.minX, bounds.maxX, 0.78),
-          y: bounds.maxY,
-          z: lerp(bounds.minZ, bounds.maxZ, 0.78),
-          intensity: clamp(vIntensity * 0.7, 0.1, 1),
-        });
-      }
-      if (stressProfile.lateralLoad > 0) {
-        const sidePushX = modelCenterX <= centerX ? bounds.maxX : bounds.minX;
-        const lIntensity = clamp(
-          0.2 + stressProfile.lateralLoad * stressIntensity * heightBias * 0.58,
-          0.1,
-          1
-        );
-        scenarioLoadList.push({
-          x: sidePushX,
-          y: lerp(bounds.minY, bounds.maxY, 0.8),
-          z: midpoint(bounds.minZ, bounds.maxZ),
-          intensity: lIntensity,
-        });
-        scenarioLoadList.push({
-          x: sidePushX,
-          y: lerp(bounds.minY, bounds.maxY, 0.56),
-          z: lerp(bounds.minZ, bounds.maxZ, 0.32),
-          intensity: clamp(lIntensity * 0.75, 0.1, 1),
-        });
-      }
-      if (stressProfile.torsionLoad > 0) {
-        const tIntensity = clamp(
-          0.2 + stressProfile.torsionLoad * stressIntensity * (0.55 + radialNorm * 0.55),
-          0.1,
-          1
-        );
-        scenarioLoadList.push({
-          x: bounds.minX,
-          y: bounds.maxY,
-          z: bounds.maxZ,
-          intensity: tIntensity,
-        });
-        scenarioLoadList.push({
-          x: bounds.maxX,
-          y: bounds.maxY,
-          z: bounds.minZ,
-          intensity: clamp(tIntensity * 0.9, 0.1, 1),
-        });
-      }
-      if (stressProfile.impactLoad > 0) {
-        const seed = hashString(part.id);
-        const tx = 0.18 + ((seed % 100) / 100) * 0.64;
-        const tz = 0.18 + (((seed >> 7) % 100) / 100) * 0.64;
-        const impactX = lerp(bounds.minX, bounds.maxX, tx);
-        const impactZ = lerp(bounds.minZ, bounds.maxZ, tz);
-        const iIntensity = clamp(
-          0.28 + stressProfile.impactLoad * stressIntensity * 0.72,
-          0.1,
-          1
-        );
-        scenarioLoadList.push({
-          x: impactX,
-          y: lerp(bounds.minY, bounds.maxY, 0.86),
-          z: impactZ,
-          intensity: iIntensity,
-        });
-        scenarioLoadList.push({
-          x: lerp(bounds.minX, bounds.maxX, clamp(tx + 0.14, 0.08, 0.92)),
-          y: lerp(bounds.minY, bounds.maxY, 0.68),
-          z: lerp(bounds.minZ, bounds.maxZ, clamp(tz - 0.12, 0.08, 0.92)),
-          intensity: clamp(iIntensity * 0.62, 0.1, 1),
-        });
-      }
-    }
-    const mergedLoadPoints = [
-      ...(loadPoints.get(part.id) ?? []),
-      ...scenarioLoadList,
-    ];
-
     partFields[part.id] = {
       baseStability: score,
-      supportPatternScore,
-      primarySpanAxis: spanAxis,
-      supportPoints: supportList.map((point) => ({
-        ...point,
-        intensity: clamp(point.intensity, 0.1, 1),
-      })),
-      loadPoints: mergedLoadPoints.map((point) => ({
-        ...point,
-        intensity: clamp(point.intensity, 0.1, 1),
-      })),
-      fastenerPoints: (fastenerPoints.get(part.id) ?? []).map((point) => ({
-        ...point,
-        intensity: clamp(point.intensity, 0.1, 1),
-      })),
+      supportPatternScore: governingSupportAdequacy,
+      primarySpanAxis: governingAxis,
+      memberMode: mode,
+      supportPoints: (supportPoints.get(part.id) ?? []).map((point) => ({ ...point, intensity: clamp(point.intensity, 0.1, 1) })),
+      loadPoints: partLoadPoints.map((point) => ({ ...point, intensity: clamp(point.intensity, 0.1, 1) })),
+      fastenerPoints: (fastenerPoints.get(part.id) ?? []).map((point) => ({ ...point, intensity: clamp(point.intensity, 0.1, 1) })),
     };
   });
 
-  const totalVolumeCuIn = woodParts.reduce(
-    (sum, part) => sum + part.dimensions[0] * part.dimensions[1] * part.dimensions[2],
-    0
-  );
+  const totalVolumeCuIn = woodParts.reduce((sum, part) => sum + (partVolumeById.get(part.id) ?? 0), 0);
   const totalVolumeCuFt = totalVolumeCuIn / 1728;
-  const estimatedWeightLb = totalVolumeCuFt * 34;
-
-  const allBounds = woodParts.map((part) => boundsById.get(part.id)).filter(Boolean) as Bounds3[];
-  const minX = Math.min(...allBounds.map((b) => b.minX));
-  const maxX = Math.max(...allBounds.map((b) => b.maxX));
-  const minY = Math.min(...allBounds.map((b) => b.minY));
-  const maxY = Math.max(...allBounds.map((b) => b.maxY));
-  const minZ = Math.min(...allBounds.map((b) => b.minZ));
-  const maxZ = Math.max(...allBounds.map((b) => b.maxZ));
-  const modelHeightIn = Math.max(maxY - minY, 0);
-  const footprintSqFt = Math.max((maxX - minX) * (maxZ - minZ), 0) / 144;
-  const maxSpanIn = Math.max(maxX - minX, maxZ - minZ);
+  const estimatedWeightLb = woodParts.reduce((sum, part) => sum + (partWeightLb.get(part.id) ?? 0), 0);
+  const footprintSqFt = Math.max((modelMaxX - modelMinX) * (modelMaxZ - modelMinZ), 0) / 144;
 
   const volumeWeightedCenterY = woodParts.reduce((sum, part) => {
-    const volume = part.dimensions[0] * part.dimensions[1] * part.dimensions[2];
+    const volume = partVolumeById.get(part.id) ?? 0;
     const bounds = boundsById.get(part.id);
     if (!bounds) return sum;
-    return sum + ((bounds.minY + bounds.maxY) / 2) * volume;
+    return sum + midpoint(bounds.minY, bounds.maxY) * volume;
   }, 0) / Math.max(totalVolumeCuIn, EPS);
-  const centerOfMassHeightIn = Math.max(0, volumeWeightedCenterY - minY);
+  const centerOfMassHeightIn = Math.max(0, volumeWeightedCenterY - modelMinY);
 
   let positiveXVolume = 0;
   let negativeXVolume = 0;
   let positiveZVolume = 0;
   let negativeZVolume = 0;
-  const centerX = (minX + maxX) / 2;
-  const centerZ = (minZ + maxZ) / 2;
+  const symmetryCenterX = midpoint(modelMinX, modelMaxX);
+  const symmetryCenterZ = midpoint(modelMinZ, modelMaxZ);
   woodParts.forEach((part) => {
-    const volume = part.dimensions[0] * part.dimensions[1] * part.dimensions[2];
+    const volume = partVolumeById.get(part.id) ?? 0;
     const bounds = boundsById.get(part.id);
     if (!bounds) return;
-    const cx = (bounds.minX + bounds.maxX) / 2;
-    const cz = (bounds.minZ + bounds.maxZ) / 2;
-    if (cx >= centerX) positiveXVolume += volume; else negativeXVolume += volume;
-    if (cz >= centerZ) positiveZVolume += volume; else negativeZVolume += volume;
+    const cx = midpoint(bounds.minX, bounds.maxX);
+    const cz = midpoint(bounds.minZ, bounds.maxZ);
+    if (cx >= symmetryCenterX) positiveXVolume += volume; else negativeXVolume += volume;
+    if (cz >= symmetryCenterZ) positiveZVolume += volume; else negativeZVolume += volume;
   });
   const symmetryX = 1 - Math.abs(positiveXVolume - negativeXVolume) / Math.max(totalVolumeCuIn, EPS);
   const symmetryZ = 1 - Math.abs(positiveZVolume - negativeZVolume) / Math.max(totalVolumeCuIn, EPS);
   const symmetryScore = clamp((symmetryX + symmetryZ) / 2, 0, 1);
 
-  const volumeWeightedScore = woodParts.reduce((sum, part) => {
-    const volume = part.dimensions[0] * part.dimensions[1] * part.dimensions[2];
-    const weight = Math.sqrt(Math.max(volume, EPS));
-    return sum + (partScores[part.id] ?? 0) * weight;
-  }, 0) / woodParts.reduce((sum, part) => {
-    const volume = part.dimensions[0] * part.dimensions[1] * part.dimensions[2];
-    return sum + Math.sqrt(Math.max(volume, EPS));
-  }, 0);
+  const weightedScoreDenominator = Math.max(woodParts.reduce((sum, part) => {
+    const diag = diagnosticsById.get(part.id);
+    const weight = Math.sqrt((partVolumeById.get(part.id) ?? 1) / 10);
+    return sum + weight * (diag?.mode === 'panel' || diag?.mode === 'beam' ? 1.15 : 1);
+  }, 0), EPS);
+  const weightedScore = woodParts.reduce((sum, part) => {
+    const diag = diagnosticsById.get(part.id);
+    const weight = Math.sqrt((partVolumeById.get(part.id) ?? 1) / 10);
+    return sum + (partScores[part.id] ?? 0) * weight * (diag?.mode === 'panel' || diag?.mode === 'beam' ? 1.15 : 1);
+  }, 0) / weightedScoreDenominator;
 
-  const supportCoverage = totalSupportRatio / Math.max(woodParts.length, 1);
+  const supportCoverage = totalSupportCoverage / Math.max(woodParts.length, 1);
   const averageConnections = totalConnections / Math.max(woodParts.length, 1);
-  const weakRatio = weakPartIds.length / Math.max(woodParts.length, 1);
-  const topHeavyRatio = centerOfMassHeightIn / Math.max(modelHeightIn, 1);
-
-  const componentPenalty = connectedGroups > 1
-    ? Math.min(0.18, 0.06 * (connectedGroups - 1))
-    : 0;
-  const weakPenalty = weakRatio * 0.12;
-  const topHeavyPenalty = clamp(topHeavyRatio - 0.7, 0, 0.4) * 0.28;
-
-  const rawScore = (
-    volumeWeightedScore * 0.62
-    + supportCoverage * 0.14
-    + clamp(averageConnections / 3.6, 0, 1) * 0.11
-    + symmetryScore * 0.08
-    + clamp(groundedParts / Math.max(woodParts.length, 1), 0, 1) * 0.05
-    + (fastenerCount > 0 ? clamp(bridgingFasteners / Math.max(fastenerCount, 1), 0, 1) * 0.06 : 0)
+  const fastenerEngagement = fastenerCount > 0 ? clamp(bridgingFasteners / fastenerCount, 0, 1) : 0;
+  const worstDemand = Math.max(worstDeflectionRatio, worstBendingRatio, worstAxialRatio, worstRackRatio);
+  const demandPenalty = clamp((worstDemand - 0.85) * 0.2, 0, 0.3);
+  const disconnectedPenalty = connectedGroups > 1 ? Math.min(0.18, (connectedGroups - 1) * 0.07) : 0;
+  const overallScore = clamp(
+    weightedScore * 0.72
+      + supportCoverage * 0.12
+      + clamp(averageConnections / 4, 0, 1) * 0.06
+      + fastenerEngagement * 0.05
+      + symmetryScore * 0.05
+      - demandPenalty
+      - disconnectedPenalty,
+    0,
+    1
   );
 
-  const penalized = clamp(rawScore - componentPenalty - weakPenalty - topHeavyPenalty, 0, 1);
-  const overallScore = clamp(0.08 + penalized * 0.92, 0, 1);
-  const grade = getGrade(overallScore);
-  const fastenerEngagement = fastenerCount > 0 ? clamp(bridgingFasteners / fastenerCount, 0, 1) : 0;
-  const stressScore = overallScore;
+  let worstDiagnostic: PartDiagnostics | null = null;
+  diagnosticsById.forEach((diagnostic) => {
+    const severity = Math.max(diagnostic.deflectionRatio, diagnostic.bendingRatio, diagnostic.axialRatio, diagnostic.rackRatio);
+    if (!worstDiagnostic || severity > Math.max(worstDiagnostic.deflectionRatio, worstDiagnostic.bendingRatio, worstDiagnostic.axialRatio, worstDiagnostic.rackRatio)) {
+      worstDiagnostic = diagnostic;
+    }
+  });
+
+  const stressPenalty = clamp(
+    (profile.id === 'baseline' ? 0 : profile.lateralFactor * 0.12 + profile.torsionFactor * 0.1 + profile.addedVerticalPsF / 1200) * stressIntensity,
+    0,
+    0.18
+  );
+  const stressScore = clamp(overallScore - stressPenalty, 0, 1);
 
   return {
     overallScore,
-    grade,
-    recommendation: buildRecommendation(overallScore, weakPartIds.length, connectedGroups, fastenerEngagement),
+    grade: getGrade(overallScore),
+    recommendation: buildRecommendation(overallScore, connectedGroups, worstDiagnostic, weakPartIds.length),
     stress: {
-      scenario: stressProfile.id,
-      label: stressProfile.label,
-      description: stressProfile.description,
+      scenario: profile.id,
+      label: profile.label,
+      description: profile.description,
       intensity: stressIntensity,
       score: stressScore,
       grade: getGrade(stressScore),
-      recommendation: buildStressRecommendation(
-        stressProfile,
-        stressScore,
-        weakPartIds.length,
-        fastenerEngagement
-      ),
+      recommendation: buildStressRecommendation(profile, worstDiagnostic),
     },
     partScores,
     partFields,
@@ -1139,6 +1169,11 @@ export const analyzeStructuralIntegrity = (
       modelHeightIn,
       centerOfMassHeightIn,
       symmetryScore,
+      worstDeflectionIn,
+      worstDeflectionRatio,
+      worstBendingRatio,
+      worstAxialRatio,
+      worstRackRatio,
     },
   };
 };

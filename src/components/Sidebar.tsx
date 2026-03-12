@@ -237,6 +237,9 @@ const clampLCutValue = (value: number, maxValue: number) => {
 };
 
 const clampMiterAngle = (value: number) => Math.max(-80, Math.min(80, value));
+const MIN_DIMENSION_VALUE = 0.01;
+const formatEditableNumber = (value: number) => value.toFixed(3).replace(/\.?0+$/, '');
+const formatEditableFixed = (value: number, digits: number) => value.toFixed(digits).replace(/\.?0+$/, '');
 
 const FOOTPRINT_EPS = 0.01;
 const ROTATION_EPS = 0.001;
@@ -804,17 +807,105 @@ export const Sidebar: React.FC = () => {
   const [libraryDimensions, setLibraryDimensions] = useState<Record<string, [number, number, number]>>({});
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>(getInitialStainPresetId);
+  const [dimensionDrafts, setDimensionDrafts] = useState<[string, string, string]>(['', '', '']);
+  const [activeDimensionField, setActiveDimensionField] = useState<number | null>(null);
+  const [positionDrafts, setPositionDrafts] = useState<[string, string, string]>(['', '', '']);
+  const [activePositionField, setActivePositionField] = useState<number | null>(null);
+  const [rotationDrafts, setRotationDrafts] = useState<[string, string, string]>(['', '', '']);
+  const [activeRotationField, setActiveRotationField] = useState<number | null>(null);
+  const [angledDrafts, setAngledDrafts] = useState<{ startAngle: string; endAngle: string }>({ startAngle: '', endAngle: '' });
+  const [activeAngledField, setActiveAngledField] = useState<'startAngle' | 'endAngle' | null>(null);
 
   useEffect(() => {
     if (selectedId) {
       setActiveTab('properties');
       setHoveredId(null);
+      return;
     }
+    setActiveTab('library');
   }, [selectedId, setHoveredId]);
 
   useEffect(() => {
     setCombineMessage(null);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedPart) {
+      setDimensionDrafts(['', '', '']);
+      setActiveDimensionField(null);
+      setPositionDrafts(['', '', '']);
+      setActivePositionField(null);
+      setRotationDrafts(['', '', '']);
+      setActiveRotationField(null);
+      setAngledDrafts({ startAngle: '', endAngle: '' });
+      setActiveAngledField(null);
+      return;
+    }
+    if (activeDimensionField !== null) return;
+    setDimensionDrafts([
+      formatEditableNumber(selectedPart.dimensions[0]),
+      formatEditableNumber(selectedPart.dimensions[1]),
+      formatEditableNumber(selectedPart.dimensions[2]),
+    ]);
+  }, [
+    activeDimensionField,
+    selectedPart?.id,
+    selectedPart?.dimensions[0],
+    selectedPart?.dimensions[1],
+    selectedPart?.dimensions[2],
+  ]);
+
+  useEffect(() => {
+    if (!selectedPart) return;
+    if (activePositionField !== null) return;
+    setPositionDrafts([
+      formatEditableFixed(selectedPart.position[0], 2),
+      formatEditableFixed(selectedPart.position[1], 2),
+      formatEditableFixed(selectedPart.position[2], 2),
+    ]);
+  }, [
+    activePositionField,
+    selectedPart?.id,
+    selectedPart?.position[0],
+    selectedPart?.position[1],
+    selectedPart?.position[2],
+  ]);
+
+  useEffect(() => {
+    if (!selectedPart) return;
+    if (activeRotationField !== null) return;
+    setRotationDrafts([
+      formatEditableFixed(toDegrees(selectedPart.rotation[0]), 0),
+      formatEditableFixed(toDegrees(selectedPart.rotation[1]), 0),
+      formatEditableFixed(toDegrees(selectedPart.rotation[2]), 0),
+    ]);
+  }, [
+    activeRotationField,
+    selectedPart?.id,
+    selectedPart?.rotation[0],
+    selectedPart?.rotation[1],
+    selectedPart?.rotation[2],
+  ]);
+
+  useEffect(() => {
+    if (!selectedPart || selectedPart.profile?.type !== 'angled') {
+      if (activeAngledField === null) {
+        setAngledDrafts({ startAngle: '', endAngle: '' });
+      }
+      return;
+    }
+    if (activeAngledField !== null) return;
+    setAngledDrafts({
+      startAngle: formatEditableFixed(selectedPart.profile.startAngle ?? 0, 0),
+      endAngle: formatEditableFixed(selectedPart.profile.endAngle ?? 0, 0),
+    });
+  }, [
+    activeAngledField,
+    selectedPart?.id,
+    selectedPart?.profile?.type,
+    selectedPart?.profile?.startAngle,
+    selectedPart?.profile?.endAngle,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -906,7 +997,7 @@ export const Sidebar: React.FC = () => {
     if (Number.isNaN(val) || val <= 0) return;
 
     const newDimensions = [...selectedPart.dimensions] as [number, number, number];
-    newDimensions[index] = val;
+    newDimensions[index] = Math.max(MIN_DIMENSION_VALUE, val);
 
     if (selectedPart.profile?.type === 'l-cut') {
       const nextProfile = {
@@ -1719,9 +1810,23 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-slate-400">Width</span>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.1"
-                    value={selectedPart.dimensions[0]}
-                    onChange={(e) => updateDimension(0, e.target.value)}
+                    value={dimensionDrafts[0]}
+                    onFocus={() => setActiveDimensionField(0)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setDimensionDrafts((prev) => [raw, prev[1], prev[2]]);
+                      if (raw.trim() !== '') updateDimension(0, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveDimensionField(null);
+                      setDimensionDrafts((prev) => [
+                        formatEditableNumber(selectedPart.dimensions[0]),
+                        prev[1],
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -1729,9 +1834,23 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-slate-400">Height</span>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.1"
-                    value={selectedPart.dimensions[1]}
-                    onChange={(e) => updateDimension(1, e.target.value)}
+                    value={dimensionDrafts[1]}
+                    onFocus={() => setActiveDimensionField(1)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setDimensionDrafts((prev) => [prev[0], raw, prev[2]]);
+                      if (raw.trim() !== '') updateDimension(1, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveDimensionField(null);
+                      setDimensionDrafts((prev) => [
+                        prev[0],
+                        formatEditableNumber(selectedPart.dimensions[1]),
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -1739,9 +1858,23 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-slate-400">Length</span>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.1"
-                    value={selectedPart.dimensions[2]}
-                    onChange={(e) => updateDimension(2, e.target.value)}
+                    value={dimensionDrafts[2]}
+                    onFocus={() => setActiveDimensionField(2)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setDimensionDrafts((prev) => [prev[0], prev[1], raw]);
+                      if (raw.trim() !== '') updateDimension(2, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveDimensionField(null);
+                      setDimensionDrafts((prev) => [
+                        prev[0],
+                        prev[1],
+                        formatEditableNumber(selectedPart.dimensions[2]),
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -1823,8 +1956,23 @@ export const Sidebar: React.FC = () => {
                           step="1"
                           min={-80}
                           max={80}
-                          value={(currentProfile.startAngle ?? 0).toFixed(0)}
-                          onChange={(e) => updateAngledMeasure('startAngle', e.target.value)}
+                          value={angledDrafts.startAngle}
+                          onFocus={() => setActiveAngledField('startAngle')}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setAngledDrafts((prev) => ({ ...prev, startAngle: raw }));
+                            if (raw.trim() !== '') updateAngledMeasure('startAngle', raw);
+                          }}
+                          onBlur={() => {
+                            setActiveAngledField(null);
+                            setAngledDrafts((prev) => ({
+                              ...prev,
+                              startAngle: formatEditableFixed(
+                                selectedPart.profile?.type === 'angled' ? (selectedPart.profile.startAngle ?? 0) : 0,
+                                0
+                              ),
+                            }));
+                          }}
                           className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                         />
                       </div>
@@ -1835,8 +1983,23 @@ export const Sidebar: React.FC = () => {
                           step="1"
                           min={-80}
                           max={80}
-                          value={(currentProfile.endAngle ?? 0).toFixed(0)}
-                          onChange={(e) => updateAngledMeasure('endAngle', e.target.value)}
+                          value={angledDrafts.endAngle}
+                          onFocus={() => setActiveAngledField('endAngle')}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setAngledDrafts((prev) => ({ ...prev, endAngle: raw }));
+                            if (raw.trim() !== '') updateAngledMeasure('endAngle', raw);
+                          }}
+                          onBlur={() => {
+                            setActiveAngledField(null);
+                            setAngledDrafts((prev) => ({
+                              ...prev,
+                              endAngle: formatEditableFixed(
+                                selectedPart.profile?.type === 'angled' ? (selectedPart.profile.endAngle ?? 0) : 0,
+                                0
+                              ),
+                            }));
+                          }}
                           className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                         />
                       </div>
@@ -1998,8 +2161,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="0.5"
-                    value={selectedPart.position[0].toFixed(2)}
-                    onChange={(e) => updatePosition(0, e.target.value)}
+                    value={positionDrafts[0]}
+                    onFocus={() => setActivePositionField(0)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setPositionDrafts((prev) => [raw, prev[1], prev[2]]);
+                      if (raw.trim() !== '') updatePosition(0, raw);
+                    }}
+                    onBlur={() => {
+                      setActivePositionField(null);
+                      setPositionDrafts((prev) => [
+                        formatEditableFixed(selectedPart.position[0], 2),
+                        prev[1],
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -2008,8 +2184,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="0.5"
-                    value={selectedPart.position[1].toFixed(2)}
-                    onChange={(e) => updatePosition(1, e.target.value)}
+                    value={positionDrafts[1]}
+                    onFocus={() => setActivePositionField(1)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setPositionDrafts((prev) => [prev[0], raw, prev[2]]);
+                      if (raw.trim() !== '') updatePosition(1, raw);
+                    }}
+                    onBlur={() => {
+                      setActivePositionField(null);
+                      setPositionDrafts((prev) => [
+                        prev[0],
+                        formatEditableFixed(selectedPart.position[1], 2),
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -2018,8 +2207,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="0.5"
-                    value={selectedPart.position[2].toFixed(2)}
-                    onChange={(e) => updatePosition(2, e.target.value)}
+                    value={positionDrafts[2]}
+                    onFocus={() => setActivePositionField(2)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setPositionDrafts((prev) => [prev[0], prev[1], raw]);
+                      if (raw.trim() !== '') updatePosition(2, raw);
+                    }}
+                    onBlur={() => {
+                      setActivePositionField(null);
+                      setPositionDrafts((prev) => [
+                        prev[0],
+                        prev[1],
+                        formatEditableFixed(selectedPart.position[2], 2),
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -2054,8 +2256,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="5"
-                    value={toDegrees(selectedPart.rotation[0])}
-                    onChange={(e) => updateRotation(0, e.target.value)}
+                    value={rotationDrafts[0]}
+                    onFocus={() => setActiveRotationField(0)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setRotationDrafts((prev) => [raw, prev[1], prev[2]]);
+                      if (raw.trim() !== '') updateRotation(0, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveRotationField(null);
+                      setRotationDrafts((prev) => [
+                        formatEditableFixed(toDegrees(selectedPart.rotation[0]), 0),
+                        prev[1],
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -2073,8 +2288,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="5"
-                    value={toDegrees(selectedPart.rotation[1])}
-                    onChange={(e) => updateRotation(1, e.target.value)}
+                    value={rotationDrafts[1]}
+                    onFocus={() => setActiveRotationField(1)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setRotationDrafts((prev) => [prev[0], raw, prev[2]]);
+                      if (raw.trim() !== '') updateRotation(1, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveRotationField(null);
+                      setRotationDrafts((prev) => [
+                        prev[0],
+                        formatEditableFixed(toDegrees(selectedPart.rotation[1]), 0),
+                        prev[2],
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
@@ -2092,8 +2320,21 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     step="5"
-                    value={toDegrees(selectedPart.rotation[2])}
-                    onChange={(e) => updateRotation(2, e.target.value)}
+                    value={rotationDrafts[2]}
+                    onFocus={() => setActiveRotationField(2)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setRotationDrafts((prev) => [prev[0], prev[1], raw]);
+                      if (raw.trim() !== '') updateRotation(2, raw);
+                    }}
+                    onBlur={() => {
+                      setActiveRotationField(null);
+                      setRotationDrafts((prev) => [
+                        prev[0],
+                        prev[1],
+                        formatEditableFixed(toDegrees(selectedPart.rotation[2]), 0),
+                      ]);
+                    }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
