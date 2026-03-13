@@ -239,7 +239,11 @@ const clampLCutValue = (value: number, maxValue: number) => {
 const clampMiterAngle = (value: number) => Math.max(-80, Math.min(80, value));
 const MIN_DIMENSION_VALUE = 0.01;
 const formatEditableNumber = (value: number) => value.toFixed(3).replace(/\.?0+$/, '');
-const formatEditableFixed = (value: number, digits: number) => value.toFixed(digits).replace(/\.?0+$/, '');
+const formatEditableFixed = (value: number, digits: number) => {
+  const fixed = value.toFixed(digits);
+  if (digits === 0) return fixed;
+  return fixed.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+};
 
 const FOOTPRINT_EPS = 0.01;
 const ROTATION_EPS = 0.001;
@@ -805,6 +809,7 @@ export const Sidebar: React.FC = () => {
   const [librarySelections, setLibrarySelections] = useState<Record<string, string>>({});
   const [libraryQuantities, setLibraryQuantities] = useState<Record<string, number>>({});
   const [libraryDimensions, setLibraryDimensions] = useState<Record<string, [number, number, number]>>({});
+  const [libraryDimensionDrafts, setLibraryDimensionDrafts] = useState<Record<string, [string, string, string]>>({});
   const [combineMessage, setCombineMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [activeStainPresetId, setActiveStainPresetId] = useState<StainPreset['id']>(getInitialStainPresetId);
   const [dimensionDrafts, setDimensionDrafts] = useState<[string, string, string]>(['', '', '']);
@@ -989,6 +994,29 @@ export const Sidebar: React.FC = () => {
         offsetXZ: [offsetX, offsetZ],
       });
     }
+  };
+
+  const commitLibraryDimensionDraft = (
+    groupId: string,
+    index: 0 | 1 | 2,
+    fallbackDimensions: [number, number, number]
+  ) => {
+    const currentDimensions = libraryDimensions[groupId] ?? fallbackDimensions;
+    const currentDrafts = libraryDimensionDrafts[groupId] ?? currentDimensions.map(formatEditableNumber) as [string, string, string];
+    const raw = currentDrafts[index]?.trim() ?? '';
+    const parsed = Number.parseFloat(raw);
+    const nextValue = raw === '' || Number.isNaN(parsed) || parsed <= 0 ? MIN_DIMENSION_VALUE : parsed;
+    const nextDimensions = [...currentDimensions] as [number, number, number];
+    nextDimensions[index] = nextValue;
+    setLibraryDimensions((prev) => ({ ...prev, [groupId]: nextDimensions }));
+    setLibraryDimensionDrafts((prev) => ({
+      ...prev,
+      [groupId]: [
+        index === 0 ? formatEditableNumber(nextDimensions[0]) : (prev[groupId]?.[0] ?? currentDrafts[0]),
+        index === 1 ? formatEditableNumber(nextDimensions[1]) : (prev[groupId]?.[1] ?? currentDrafts[1]),
+        index === 2 ? formatEditableNumber(nextDimensions[2]) : (prev[groupId]?.[2] ?? currentDrafts[2]),
+      ],
+    }));
   };
 
   const updateDimension = (index: number, value: string) => {
@@ -1566,6 +1594,8 @@ export const Sidebar: React.FC = () => {
                     const isAddPanelOpen = activeAddGroupId === group.id;
                     const quantityLabel = selectedQuantity > 1 ? `${selectedQuantity} pcs` : '1 pc';
                     const selectedDimensions = libraryDimensions[group.id] ?? [...selectedTemplate.dimensions] as [number, number, number];
+                    const selectedDimensionDrafts = libraryDimensionDrafts[group.id]
+                      ?? selectedDimensions.map(formatEditableNumber) as [string, string, string];
 
                     return (
                       <div
@@ -1625,6 +1655,10 @@ export const Sidebar: React.FC = () => {
                                     ...prev,
                                     [group.id]: [...nextTemplate.dimensions] as [number, number, number],
                                   }));
+                                  setLibraryDimensionDrafts((prev) => ({
+                                    ...prev,
+                                    [group.id]: nextTemplate.dimensions.map(formatEditableNumber) as [string, string, string],
+                                  }));
                                 }}
                                 className="mt-0.5 w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                               >
@@ -1658,15 +1692,22 @@ export const Sidebar: React.FC = () => {
                                   type="number"
                                   min={0.01}
                                   step={0.01}
-                                  value={selectedDimensions[0]}
+                                  value={selectedDimensionDrafts[0]}
                                   onChange={(e) => {
-                                    const numeric = Number.parseFloat(e.target.value);
+                                    const raw = e.target.value;
+                                    setLibraryDimensionDrafts((prev) => ({
+                                      ...prev,
+                                      [group.id]: [raw, selectedDimensionDrafts[1], selectedDimensionDrafts[2]],
+                                    }));
+                                    if (raw.trim() === '') return;
+                                    const numeric = Number.parseFloat(raw);
                                     if (Number.isNaN(numeric) || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [numeric, selectedDimensions[1], selectedDimensions[2]],
                                     }));
                                   }}
+                                  onBlur={() => commitLibraryDimensionDraft(group.id, 0, selectedTemplate.dimensions)}
                                   className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                                   title="Width"
                                   aria-label={`${group.title} width`}
@@ -1675,15 +1716,22 @@ export const Sidebar: React.FC = () => {
                                   type="number"
                                   min={0.01}
                                   step={0.01}
-                                  value={selectedDimensions[1]}
+                                  value={selectedDimensionDrafts[1]}
                                   onChange={(e) => {
-                                    const numeric = Number.parseFloat(e.target.value);
+                                    const raw = e.target.value;
+                                    setLibraryDimensionDrafts((prev) => ({
+                                      ...prev,
+                                      [group.id]: [selectedDimensionDrafts[0], raw, selectedDimensionDrafts[2]],
+                                    }));
+                                    if (raw.trim() === '') return;
+                                    const numeric = Number.parseFloat(raw);
                                     if (Number.isNaN(numeric) || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [selectedDimensions[0], numeric, selectedDimensions[2]],
                                     }));
                                   }}
+                                  onBlur={() => commitLibraryDimensionDraft(group.id, 1, selectedTemplate.dimensions)}
                                   className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                                   title="Height"
                                   aria-label={`${group.title} height`}
@@ -1692,15 +1740,22 @@ export const Sidebar: React.FC = () => {
                                   type="number"
                                   min={0.01}
                                   step={0.01}
-                                  value={selectedDimensions[2]}
+                                  value={selectedDimensionDrafts[2]}
                                   onChange={(e) => {
-                                    const numeric = Number.parseFloat(e.target.value);
+                                    const raw = e.target.value;
+                                    setLibraryDimensionDrafts((prev) => ({
+                                      ...prev,
+                                      [group.id]: [selectedDimensionDrafts[0], selectedDimensionDrafts[1], raw],
+                                    }));
+                                    if (raw.trim() === '') return;
+                                    const numeric = Number.parseFloat(raw);
                                     if (Number.isNaN(numeric) || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [selectedDimensions[0], selectedDimensions[1], numeric],
                                     }));
                                   }}
+                                  onBlur={() => commitLibraryDimensionDraft(group.id, 2, selectedTemplate.dimensions)}
                                   className="w-full px-2 py-1 text-xs border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                                   title="Length"
                                   aria-label={`${group.title} length`}

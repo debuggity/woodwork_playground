@@ -1324,7 +1324,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
           onMouseUp={onTransformEnd}
           onObjectChange={onTransformObjectChange}
           translationSnap={snapEnabled ? 0.125 : undefined}
-          rotationSnap={snapEnabled ? Math.PI / 12 : undefined}
+          rotationSnap={snapEnabled ? Math.PI / 36 : undefined}
         />
       )}
     </>
