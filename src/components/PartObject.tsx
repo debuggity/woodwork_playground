@@ -515,6 +515,40 @@ const createHandleGeometry = (width: number, depth: number) => {
   return torus;
 };
 
+const getOverlaySegmentCount = (size: number) => {
+  if (size >= 40) return 22;
+  if (size >= 28) return 18;
+  if (size >= 18) return 14;
+  if (size >= 10) return 10;
+  if (size >= 5) return 6;
+  return 3;
+};
+
+const createHeatOverlaySourceGeometry = (
+  part: PartData,
+  width: number,
+  height: number,
+  depth: number,
+  fallback: THREE.BufferGeometry
+) => {
+  if (part.type === 'hardware') {
+    return fallback.clone();
+  }
+
+  if (!part.profile || part.profile.type === 'rect') {
+    return new THREE.BoxGeometry(
+      width,
+      height,
+      depth,
+      getOverlaySegmentCount(width),
+      Math.max(1, getOverlaySegmentCount(height) - 2),
+      getOverlaySegmentCount(depth)
+    );
+  }
+
+  return fallback.clone();
+};
+
 const hashString = (value: string) => {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
@@ -821,7 +855,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
   const heatOverlayGeometry = useMemo(() => {
     if (data.type === 'hardware' || !structuralOverlayEnabled || !structuralField) return null;
 
-    const cloned = geometry.clone();
+    const cloned = createHeatOverlaySourceGeometry(data, width, height, depth, geometry);
     const positionAttr = cloned.getAttribute('position');
     if (!positionAttr) return null;
 
@@ -851,33 +885,59 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       intensity: point.intensity,
     }));
 
-    const supportRadius = Math.max(Math.min(width, depth) * 0.35, 1.2);
-    const loadRadius = Math.max(Math.max(width, depth) * 0.28, 1.5);
+    const panelLikeMember = structuralField.memberMode === 'panel' || structuralField.memberMode === 'shear-panel';
+    const localUpWorld = new THREE.Vector3(0, 1, 0).applyQuaternion(partQuat).normalize();
+    const isMostlyHorizontal = Math.abs(localUpWorld.dot(new THREE.Vector3(0, 1, 0))) >= 0.72;
+    const isHorizontalSupportMap =
+      isMostlyHorizontal
+      && (
+        structuralField.memberMode === 'panel'
+        || structuralField.memberMode === 'beam'
+        || structuralField.memberMode === 'joint'
+      );
+    const supportRadius = panelLikeMember
+      ? Math.max(Math.min(width, depth) * (isHorizontalSupportMap ? 0.18 : 0.24), 0.75)
+      : Math.max(Math.min(width, depth) * 0.35, 1.2);
+    const loadRadius = Math.max(Math.max(width, depth) * (isHorizontalSupportMap ? 0.18 : 0.28), 1.1);
     const fastenerRadius = Math.max(Math.min(width, depth) * 0.2, 0.9);
     const halfW = Math.max(width / 2, 0.01);
     const halfD = Math.max(depth / 2, 0.01);
+    const planarDistance = (a: THREE.Vector3, b: THREE.Vector3) =>
+      isHorizontalSupportMap
+        ? Math.hypot(a.x - b.x, a.z - b.z)
+        : a.distanceTo(b);
 
     for (let i = 0; i < positionAttr.count; i += 1) {
       localPoint.fromBufferAttribute(positionAttr as THREE.BufferAttribute, i);
       worldPoint.copy(localPoint).applyQuaternion(partQuat).add(partPos);
 
-      const supportInfluence = supportLocals.reduce((best, point) => {
-        const distance = localPoint.distanceTo(point.pos);
-        const falloff = Math.exp(-(distance * distance) / (2 * supportRadius * supportRadius)) * point.intensity;
-        return Math.max(best, falloff);
-      }, 0);
+      const supportInfluences = supportLocals.map((point) => {
+        const distance = planarDistance(localPoint, point.pos);
+        return Math.exp(-(distance * distance) / (2 * supportRadius * supportRadius)) * point.intensity;
+      }).sort((a, b) => b - a);
+      const supportInfluence = clamp(
+        (supportInfluences[0] ?? 0)
+          + (supportInfluences[1] ?? 0) * 0.6
+          + (supportInfluences[2] ?? 0) * 0.3,
+        0,
+        1
+      );
 
       const fastenerInfluence = fastenerLocals.reduce((best, point) => {
-        const distance = localPoint.distanceTo(point.pos);
+        const distance = planarDistance(localPoint, point.pos);
         const falloff = Math.exp(-(distance * distance) / (2 * fastenerRadius * fastenerRadius)) * point.intensity;
         return Math.max(best, falloff);
       }, 0);
 
       const loadInfluence = loadLocals.reduce((best, point) => {
-        const distance = localPoint.distanceTo(point.pos);
+        const distance = planarDistance(localPoint, point.pos);
         const falloff = Math.exp(-(distance * distance) / (2 * loadRadius * loadRadius)) * point.intensity;
         return Math.max(best, falloff);
       }, 0);
+      const effectiveSupportInfluence = isHorizontalSupportMap
+        ? clamp(Math.max(supportInfluence, fastenerInfluence * 0.75), 0, 1)
+        : supportInfluence;
+      const mappedLoadInfluence = isHorizontalSupportMap ? loadInfluence * 0.16 : loadInfluence;
 
       const spanCoord = structuralField.primarySpanAxis === 'x'
         ? Math.abs(localPoint.x) / halfW
@@ -885,6 +945,11 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
       const primaryFreeSpanRisk = clamp(1 - spanCoord, 0, 1);
       const panelCenterRisk = clamp(1 - Math.abs(localPoint.x) / halfW, 0, 1)
         * clamp(1 - Math.abs(localPoint.z) / halfD, 0, 1);
+      const cornerFactor = clamp(
+        (Math.abs(localPoint.x) / halfW + Math.abs(localPoint.z) / halfD - 1) / 0.65,
+        0,
+        1
+      );
       // Panels should emphasize unsupported centers, while beams emphasize the primary free span.
       const freeSpanRisk = structuralField.memberMode === 'panel'
         ? clamp(primaryFreeSpanRisk * 0.45 + panelCenterRisk * 0.95, 0, 1)
@@ -897,21 +962,34 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
 
       const baseRisk = 1 - structuralField.baseStability;
       const supportSpanRisk = clamp(1 - structuralField.supportPatternScore, 0, 1);
-      const sagRisk = clamp((worldPoint.y - data.position[1]) / Math.max(height, 0.5), -0.2, 1);
-      const supportDistanceRisk = clamp(1 - supportInfluence * 1.22, 0, 1);
-      const loadedEdgeRisk = edgeRisk * clamp(0.2 + loadInfluence * 0.8, 0, 1);
+      const sagRisk = isHorizontalSupportMap
+        ? 0
+        : clamp((worldPoint.y - data.position[1]) / Math.max(height, 0.5), -0.2, 1);
+      const supportDistanceRisk = clamp(1 - effectiveSupportInfluence * 1.28, 0, 1);
+      const loadedEdgeRisk = isHorizontalSupportMap
+        ? 0
+        : edgeRisk * clamp(0.2 + mappedLoadInfluence * 0.8, 0, 1);
       const panelMode = structuralField.memberMode === 'panel';
+      const shearPanelMode = structuralField.memberMode === 'shear-panel';
       const jointMode = structuralField.memberMode === 'joint';
+      const unsupportedCornerRisk = panelMode
+        ? cornerFactor * clamp(supportDistanceRisk * 1.25 + mappedLoadInfluence * 0.08, 0, 1)
+        : 0;
+      const unsupportedCenterRisk = panelMode
+        ? panelCenterRisk * clamp(supportDistanceRisk * 1.08 + (1 - effectiveSupportInfluence) * 0.42, 0, 1)
+        : 0;
       const risk = clamp(
-        baseRisk * (jointMode ? 0.16 : panelMode ? 0.32 : 0.26)
-          + supportSpanRisk * (jointMode ? 0.1 : panelMode ? 0.3 : 0.21)
-          + loadInfluence * (jointMode ? 0.18 : panelMode ? 0.55 : 0.47)
-          + freeSpanRisk * (jointMode ? 0.08 : panelMode ? 0.42 : 0.27)
-          + supportDistanceRisk * (jointMode ? 0.12 : panelMode ? 0.34 : 0.24)
-          + loadedEdgeRisk * (jointMode ? 0.03 : panelMode ? 0.04 : 0.06)
-          + Math.max(0, sagRisk) * (panelMode ? 0.16 : 0.08)
-          - supportInfluence * (jointMode ? 0.72 : panelMode ? 0.54 : 0.68)
-          - fastenerInfluence * (jointMode ? 0.34 : 0.27),
+        baseRisk * (jointMode ? 0.1 : shearPanelMode ? 0.2 : panelMode ? 0.18 : 0.18)
+          + supportSpanRisk * (jointMode ? 0.08 : shearPanelMode ? 0.18 : panelMode ? 0.24 : 0.18)
+          + mappedLoadInfluence * (jointMode ? 0.08 : shearPanelMode ? 0.32 : panelMode ? 0.12 : 0.16)
+          + freeSpanRisk * (jointMode ? 0.12 : shearPanelMode ? 0.16 : panelMode ? 0.48 : 0.34)
+          + unsupportedCornerRisk * 0.95
+          + unsupportedCenterRisk * 0.72
+          + supportDistanceRisk * (jointMode ? 0.14 : shearPanelMode ? 0.2 : panelMode ? 0.44 : 0.28)
+          + loadedEdgeRisk * (jointMode ? 0.03 : shearPanelMode ? 0.03 : panelMode ? 0.04 : 0.06)
+          + Math.max(0, sagRisk) * (shearPanelMode ? 0 : panelMode ? 0.16 : 0.08)
+          - effectiveSupportInfluence * (jointMode ? 0.88 : shearPanelMode ? 0.76 : panelMode ? 0.98 : 0.72)
+          - fastenerInfluence * (jointMode ? 0.56 : shearPanelMode ? 0.42 : 0.5),
         0,
         1
       );

@@ -33,13 +33,27 @@ type SupportPatch = {
   belowId?: string;
 };
 
+type LocalPlanSupportPoint = {
+  x: number;
+  z: number;
+  intensity: number;
+};
+
+type PlanSupportMetrics = {
+  centerSupport: number;
+  edgeSupport: number;
+  cornerSupport: number;
+  averageSupport: number;
+  cornerScores: [number, number, number, number];
+};
+
 type OrientedFrame = {
   center: THREE.Vector3;
   half: [number, number, number];
   axes: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
 };
 
-type PartMode = 'beam' | 'panel' | 'column' | 'joint' | 'general';
+type PartMode = 'beam' | 'panel' | 'shear-panel' | 'column' | 'joint' | 'general';
 
 type PartDiagnostics = {
   mode: PartMode;
@@ -156,8 +170,8 @@ const STRESS_PROFILES: Record<StressScenario, StressProfile> = {
     label: 'Baseline',
     description: 'Dead load plus stacked part load transfer. Best for checking sag, span, and support quality.',
     addedVerticalPsF: 8,
-    lateralFactor: 0.08,
-    torsionFactor: 0.04,
+    lateralFactor: 0,
+    torsionFactor: 0,
     impactPointLoadLb: 0,
   },
   'vertical-load': {
@@ -520,6 +534,77 @@ const projectSupportCoords = (frame: OrientedFrame, patches: SupportPatch[]) => 
   return { supportXs, supportZs };
 };
 
+const projectStructuralPointsToPlanLocal = (
+  frame: OrientedFrame,
+  points: StructuralPoint[],
+  intensityScale = 1
+): LocalPlanSupportPoint[] =>
+  points.map((point) => {
+    const local = toFrameLocal(frame, new THREE.Vector3(point.x, point.y, point.z));
+    return {
+      x: local.x,
+      z: local.z,
+      intensity: clamp(point.intensity * intensityScale, 0.08, 1),
+    };
+  });
+
+const getPlanSupportInfluence = (
+  x: number,
+  z: number,
+  width: number,
+  depth: number,
+  supports: LocalPlanSupportPoint[]
+) => {
+  if (supports.length === 0) return 0;
+  const radius = Math.max(Math.min(width, depth) * 0.22, 0.9);
+  const influences = supports
+    .map((support) => {
+      const dx = x - support.x;
+      const dz = z - support.z;
+      return Math.exp(-((dx * dx + dz * dz) / (2 * radius * radius))) * support.intensity;
+    })
+    .sort((a, b) => b - a);
+  const combined =
+    (influences[0] ?? 0)
+    + (influences[1] ?? 0) * 0.65
+    + (influences[2] ?? 0) * 0.35;
+  return clamp(combined, 0, 1);
+};
+
+const computePlanSupportMetrics = (
+  width: number,
+  depth: number,
+  supports: LocalPlanSupportPoint[]
+): PlanSupportMetrics => {
+  const halfW = Math.max(width / 2, 0.01);
+  const halfD = Math.max(depth / 2, 0.01);
+  const corners: Array<[number, number]> = [
+    [-halfW, -halfD],
+    [halfW, -halfD],
+    [-halfW, halfD],
+    [halfW, halfD],
+  ];
+  const cornerScores = corners.map(([x, z]) =>
+    getPlanSupportInfluence(x, z, width, depth, supports)
+  ) as [number, number, number, number];
+  const edgeScores = [
+    getPlanSupportInfluence(0, -halfD, width, depth, supports),
+    getPlanSupportInfluence(0, halfD, width, depth, supports),
+    getPlanSupportInfluence(-halfW, 0, width, depth, supports),
+    getPlanSupportInfluence(halfW, 0, width, depth, supports),
+  ];
+  const centerSupport = getPlanSupportInfluence(0, 0, width, depth, supports);
+  return {
+    centerSupport,
+    edgeSupport: edgeScores.reduce((sum, value) => sum + value, 0) / edgeScores.length,
+    cornerSupport: Math.min(...cornerScores),
+    averageSupport:
+      (centerSupport + edgeScores.reduce((sum, value) => sum + value, 0) + cornerScores.reduce((sum, value) => sum + value, 0))
+      / (1 + edgeScores.length + cornerScores.length),
+    cornerScores,
+  };
+};
+
 const buildFloorPatch = (bounds: Bounds3): SupportPatch => ({
   xMin: bounds.minX,
   xMax: bounds.maxX,
@@ -872,12 +957,28 @@ export const analyzeStructuralIntegrity = (
     const lateralHeight = Math.max(bounds.maxY - bounds.minY, 0.1);
     const supportCoverage = clamp((supportArea.get(part.id) ?? 0) / footprintArea, 0, 1);
     totalSupportCoverage += supportCoverage;
+    const connectionCount = (connections.get(part.id) ?? []).length;
+    totalConnections += connectionCount;
+    const fastenerSupport = clamp((fastenerLinks.get(part.id) ?? 0) / 3, 0, 1);
 
     const scenarioVerticalLoad = horizontality >= 0.72
       ? areaLoadToTotalLoad(profile.addedVerticalPsF * stressIntensity, planArea) * clamp(0.45 + topExposure * 0.75, 0.45, 1.2)
       : 0;
     const impactLoad = profile.impactPointLoadLb * stressIntensity * clamp(0.4 + topExposure * 0.6, 0, 1);
-    const { supportXs, supportZs } = projectSupportCoords(frame, supportPatchList);
+    const patchSupportCoords = projectSupportCoords(frame, supportPatchList);
+    const supportSamples = [
+      ...projectStructuralPointsToPlanLocal(frame, supportPoints.get(part.id) ?? []),
+      ...projectStructuralPointsToPlanLocal(frame, fastenerPoints.get(part.id) ?? [], 0.85),
+    ];
+    const planSupportMetrics = computePlanSupportMetrics(
+      part.dimensions[0],
+      part.dimensions[2],
+      supportSamples
+    );
+    const supplementalSupportXs = supportSamples.map((point) => point.x);
+    const supplementalSupportZs = supportSamples.map((point) => point.z);
+    const supportXs = [...patchSupportCoords.supportXs, ...supplementalSupportXs];
+    const supportZs = [...patchSupportCoords.supportZs, ...supplementalSupportZs];
 
     const beamX = estimateBeamSpan(part.dimensions[0], frame.half[0], supportXs);
     const beamZ = estimateBeamSpan(part.dimensions[2], frame.half[2], supportZs);
@@ -920,17 +1021,44 @@ export const analyzeStructuralIntegrity = (
     const eulerCapacity = (Math.PI * Math.PI * material.modulusPsi * weakSection.inertia) / Math.max(Math.pow(Math.max(columnLength, 0.1), 2), EPS);
     const crushingCapacity = weakSection.area * material.compressionAllowPsi;
     const axialRatio = axialLoadLb / Math.max(Math.min(crushingCapacity, eulerCapacity), 1);
-
-    const connectionCount = (connections.get(part.id) ?? []).length;
-    totalConnections += connectionCount;
-    const fastenerSupport = clamp((fastenerLinks.get(part.id) ?? 0) / 3, 0, 1);
     const centerX = midpoint(bounds.minX, bounds.maxX);
     const centerZ = midpoint(bounds.minZ, bounds.maxZ);
     const radialBias = clamp(Math.hypot(centerX - modelCenterX, centerZ - modelCenterZ) / Math.max(Math.hypot(modelMaxX - modelMinX, modelMaxZ - modelMinZ), 1), 0, 1);
-    const braceHelp = clamp(connectionCount / 4.5 + fastenerSupport * 0.35, 0, 1);
-    const rackDemand = profile.lateralFactor * stressIntensity * clamp(lateralHeight / Math.max(Math.min(modelMaxX - modelMinX, modelMaxZ - modelMinZ), 12), 0.2, 2.2);
-    const torsionDemand = profile.torsionFactor * stressIntensity * clamp(0.35 + radialBias * 0.9 + topExposure * 0.4, 0.35, 1.8);
-    const rackRatio = (rackDemand + torsionDemand) * (1 - clamp(governingSupportAdequacy * 0.5 + braceHelp * 0.5, 0, 1));
+    const panelWidth = Math.max(part.dimensions[0], part.dimensions[2]);
+    const isVerticalSheet = part.type === 'sheet' && horizontality <= 0.38 && verticality >= 0.78;
+    const shearPanelHelp = isVerticalSheet
+      ? clamp(
+          connectionCount / 2.8
+          + fastenerSupport * 0.95
+          + supportCoverage * 0.55
+          + clamp(panelWidth / Math.max(lateralHeight, 1), 0.22, 1.1) * 0.35,
+          0,
+          1
+        )
+      : 0;
+    const braceHelp = clamp(
+      connectionCount / 4.5
+      + fastenerSupport * 0.35
+      + shearPanelHelp * 0.8,
+      0,
+      1
+    );
+    const rackDemandBase = profile.lateralFactor * stressIntensity
+      * clamp(lateralHeight / Math.max(Math.min(modelMaxX - modelMinX, modelMaxZ - modelMinZ), 12), 0.2, 2.2);
+    const rackDemand = isVerticalSheet
+      ? rackDemandBase * clamp(0.42 + (1 - shearPanelHelp) * 0.85, 0.18, 1.1)
+      : rackDemandBase;
+    const torsionDemandBase = profile.torsionFactor * stressIntensity
+      * clamp(0.35 + radialBias * 0.9 + topExposure * 0.4, 0.35, 1.8);
+    const torsionDemand = isVerticalSheet
+      ? torsionDemandBase * clamp(0.3 + (1 - shearPanelHelp) * 0.8, 0.15, 1)
+      : torsionDemandBase;
+    const rackResistance = clamp(
+      governingSupportAdequacy * 0.36 + braceHelp * 0.34 + shearPanelHelp * 0.5,
+      0,
+      1
+    );
+    const rackRatio = (rackDemand + torsionDemand) * (1 - rackResistance);
 
     const looksLikeLedger = horizontality >= 0.72
       && part.type === 'lumber'
@@ -938,8 +1066,23 @@ export const analyzeStructuralIntegrity = (
       && connectionCount >= 2
       && (supportCoverage >= 0.12 || fastenerSupport >= 0.35)
       && totalWeight <= (partWeightLb.get(part.id) ?? 0) * 6;
+    const horizontalMember = horizontality >= 0.72;
+    const cornerSupportDeficit = horizontalMember ? 1 - planSupportMetrics.cornerSupport : 0;
+    const centerSupportDeficit = horizontalMember ? 1 - planSupportMetrics.centerSupport : 0;
+    const edgeSupportDeficit = horizontalMember ? 1 - planSupportMetrics.edgeSupport : 0;
+    const planSupportScore = horizontalMember
+      ? clamp(
+          planSupportMetrics.cornerSupport * 0.46
+          + planSupportMetrics.centerSupport * 0.34
+          + planSupportMetrics.edgeSupport * 0.2,
+          0,
+          1
+        )
+      : governingSupportAdequacy;
     const mode: PartMode = columnLength >= Math.max(part.dimensions[0], part.dimensions[2]) * 2.8 && verticality >= 0.82
       ? 'column'
+      : isVerticalSheet && (connectionCount >= 2 || fastenerSupport >= 0.3 || supportCoverage >= 0.08)
+        ? 'shear-panel'
       : isSheetLike
         ? 'panel'
         : looksLikeLedger
@@ -952,8 +1095,21 @@ export const analyzeStructuralIntegrity = (
 
     let risk = 0;
     if (mode === 'column') risk = Math.max(axialRatio, rackRatio * 0.95, deflectionRatio * 0.2);
-    else if (mode === 'panel') risk = Math.max(deflectionRatio * 1.2, bendingRatio * 0.95, rackRatio * 0.42);
-    else if (mode === 'beam') risk = Math.max(deflectionRatio * 0.9, bendingRatio, rackRatio * 0.4);
+    else if (mode === 'shear-panel') risk = Math.max(rackRatio * 0.72, bendingRatio * 0.22, axialRatio * 0.22, deflectionRatio * 0.08);
+    else if (mode === 'panel') risk = Math.max(
+      deflectionRatio * 1.2,
+      bendingRatio * 0.95,
+      rackRatio * 0.42,
+      cornerSupportDeficit * 1.22,
+      centerSupportDeficit * 0.9
+    );
+    else if (mode === 'beam') risk = Math.max(
+      deflectionRatio * 0.9,
+      bendingRatio,
+      rackRatio * 0.4,
+      centerSupportDeficit * 0.62,
+      edgeSupportDeficit * 0.54
+    );
     else if (mode === 'joint') risk = Math.max(bendingRatio * 0.45, axialRatio * 0.4, rackRatio * 0.7, deflectionRatio * 0.18);
     else risk = Math.max(deflectionRatio * 0.55, bendingRatio * 0.55, axialRatio * 0.7, rackRatio);
 
@@ -1001,25 +1157,65 @@ export const analyzeStructuralIntegrity = (
     const partLoadPoints = [...(loadPoints.get(part.id) ?? [])];
     const centerLoadIntensity = mode === 'panel'
       ? clamp(Math.max(deflectionRatio * 1.15, bendingRatio, 0.24 + (1 - governingSupportAdequacy) * 0.28), 0.16, 1)
+      : mode === 'shear-panel'
+        ? clamp(Math.max(rackRatio * 0.95, 0.12 + (1 - braceHelp) * 0.22), 0.1, 0.85)
       : clamp(Math.max(deflectionRatio, bendingRatio, axialRatio * 0.8, rackRatio * 0.9), 0.12, 1);
     partLoadPoints.push({
       x: midpoint(bounds.minX, bounds.maxX),
-      y: bounds.maxY,
+      y: mode === 'shear-panel' ? lerp(bounds.minY, bounds.maxY, 0.6) : bounds.maxY,
       z: midpoint(bounds.minZ, bounds.maxZ),
       intensity: centerLoadIntensity,
     });
     if (mode === 'panel') {
       partLoadPoints.push({
+        x: bounds.minX,
+        y: bounds.maxY,
+        z: bounds.minZ,
+        intensity: clamp((1 - planSupportMetrics.cornerScores[0]) * 0.95, 0.1, 1),
+      });
+      partLoadPoints.push({
+        x: bounds.maxX,
+        y: bounds.maxY,
+        z: bounds.minZ,
+        intensity: clamp((1 - planSupportMetrics.cornerScores[1]) * 0.95, 0.1, 1),
+      });
+      partLoadPoints.push({
+        x: bounds.minX,
+        y: bounds.maxY,
+        z: bounds.maxZ,
+        intensity: clamp((1 - planSupportMetrics.cornerScores[2]) * 0.95, 0.1, 1),
+      });
+      partLoadPoints.push({
+        x: bounds.maxX,
+        y: bounds.maxY,
+        z: bounds.maxZ,
+        intensity: clamp((1 - planSupportMetrics.cornerScores[3]) * 0.95, 0.1, 1),
+      });
+      partLoadPoints.push({
         x: lerp(bounds.minX, bounds.maxX, 0.5),
         y: bounds.maxY,
         z: lerp(bounds.minZ, bounds.maxZ, 0.28),
-        intensity: clamp(centerLoadIntensity * 0.82, 0.14, 1),
+        intensity: clamp(Math.max(centerLoadIntensity * 0.82, centerSupportDeficit * 0.72), 0.14, 1),
       });
       partLoadPoints.push({
         x: lerp(bounds.minX, bounds.maxX, 0.5),
         y: bounds.maxY,
         z: lerp(bounds.minZ, bounds.maxZ, 0.72),
-        intensity: clamp(centerLoadIntensity * 0.82, 0.14, 1),
+        intensity: clamp(Math.max(centerLoadIntensity * 0.82, centerSupportDeficit * 0.72), 0.14, 1),
+      });
+    }
+    if (mode === 'shear-panel') {
+      partLoadPoints.push({
+        x: centerX >= modelCenterX ? bounds.maxX : bounds.minX,
+        y: lerp(bounds.minY, bounds.maxY, 0.35),
+        z: midpoint(bounds.minZ, bounds.maxZ),
+        intensity: clamp(centerLoadIntensity * 0.82, 0.1, 0.9),
+      });
+      partLoadPoints.push({
+        x: centerX >= modelCenterX ? bounds.maxX : bounds.minX,
+        y: lerp(bounds.minY, bounds.maxY, 0.82),
+        z: midpoint(bounds.minZ, bounds.maxZ),
+        intensity: clamp(centerLoadIntensity * 0.72, 0.1, 0.85),
       });
     }
     if (profile.torsionFactor > 0 && stressIntensity > 0.01) {
@@ -1047,7 +1243,15 @@ export const analyzeStructuralIntegrity = (
 
     partFields[part.id] = {
       baseStability: score,
-      supportPatternScore: governingSupportAdequacy,
+      supportPatternScore: clamp(
+        mode === 'panel' || mode === 'beam'
+          ? governingSupportAdequacy * 0.58 + planSupportScore * 0.42
+          : mode === 'shear-panel'
+            ? governingSupportAdequacy * 0.45 + braceHelp * 0.55
+            : governingSupportAdequacy,
+        0,
+        1
+      ),
       primarySpanAxis: governingAxis,
       memberMode: mode,
       supportPoints: (supportPoints.get(part.id) ?? []).map((point) => ({ ...point, intensity: clamp(point.intensity, 0.1, 1) })),
