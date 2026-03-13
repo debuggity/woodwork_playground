@@ -183,6 +183,15 @@ type AutoScrewPlacementCandidate = {
   u: number;
   v: number;
   edgeMargin: number;
+  firstContainment: ScrewContainmentSummary;
+  secondContainment: ScrewContainmentSummary;
+};
+
+type ScrewContainmentSummary = {
+  minMargin: number;
+  averageMargin: number;
+  seamMargin: number;
+  farMargin: number;
 };
 
 const buildOrientedFrame = (part: PartData): OrientedFrame => {
@@ -313,6 +322,39 @@ const pointInPolygonOrOnEdge2d = (x: number, z: number, points: [number, number]
     }
   }
   return inside;
+};
+
+const getPointToSegmentDistance2d = (
+  point: [number, number],
+  start: [number, number],
+  end: [number, number]
+) => {
+  const [px, pz] = point;
+  const [x1, z1] = start;
+  const [x2, z2] = end;
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= Number.EPSILON) {
+    return Math.hypot(px - x1, pz - z1);
+  }
+
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (pz - z1) * dz) / lengthSq));
+  const closestX = x1 + dx * t;
+  const closestZ = z1 + dz * t;
+  return Math.hypot(px - closestX, pz - closestZ);
+};
+
+const getPolygonEdgeDistance2d = (x: number, z: number, points: [number, number][]) => {
+  if (points.length === 0) return 0;
+  const point: [number, number] = [x, z];
+  let best = Infinity;
+  for (let i = 0; i < points.length; i += 1) {
+    const start = points[i];
+    const end = points[(i + 1) % points.length];
+    best = Math.min(best, getPointToSegmentDistance2d(point, start, end));
+  }
+  return Number.isFinite(best) ? best : 0;
 };
 
 const SAW_PATH_EPS = 0.02;
@@ -668,6 +710,28 @@ const getLinePointCoordsInFrame = (
   ] as const;
 };
 
+const getPointContainmentInFrame = (
+  frame: OrientedFrame,
+  footprint: [number, number][],
+  worldPoint: THREE.Vector3
+) => {
+  const [lx, ly, lz] = getLinePointCoordsInFrame(frame, worldPoint);
+  const thicknessMargin = frame.half[1] - Math.abs(ly);
+  if (thicknessMargin < -AUTO_SCREW_PROFILE_EPS) {
+    return null;
+  }
+  if (!pointInPolygonOrOnEdge2d(lx, lz, footprint)) {
+    return null;
+  }
+
+  const profileMargin = getPolygonEdgeDistance2d(lx, lz, footprint);
+  return {
+    profileMargin,
+    thicknessMargin,
+    margin: Math.min(profileMargin, thicknessMargin),
+  };
+};
+
 const intersectLineWithFrame = (
   frame: OrientedFrame,
   linePoint: THREE.Vector3,
@@ -714,6 +778,102 @@ const intersectLineWithFrame = (
   };
 };
 
+const summarizeSegmentContainment = (
+  frame: OrientedFrame,
+  footprint: [number, number][],
+  screwCenter: THREE.Vector3,
+  screwDir: THREE.Vector3,
+  start: number,
+  end: number,
+  seamAtStart: boolean
+): ScrewContainmentSummary | null => {
+  if (end - start <= 1e-5) {
+    return null;
+  }
+
+  const dir = screwDir.clone().normalize();
+  const sampleCount = 7;
+  let minMargin = Infinity;
+  let totalMargin = 0;
+  let seamMargin = Infinity;
+  let farMargin = Infinity;
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    // Sample interior points only. The screw is expected to touch the part
+    // boundary at its entry/exit faces, so endpoint samples would incorrectly
+    // report zero clearance for otherwise valid placements.
+    const ratio = (i + 0.5) / sampleCount;
+    const t = start + (end - start) * ratio;
+    const worldPoint = screwCenter.clone().addScaledVector(dir, t);
+    const containment = getPointContainmentInFrame(frame, footprint, worldPoint);
+    if (!containment) {
+      return null;
+    }
+
+    minMargin = Math.min(minMargin, containment.margin);
+    totalMargin += containment.margin;
+
+    if (ratio <= 0.34) {
+      if (seamAtStart) seamMargin = Math.min(seamMargin, containment.margin);
+      else farMargin = Math.min(farMargin, containment.margin);
+    }
+    if (ratio >= 0.66) {
+      if (seamAtStart) farMargin = Math.min(farMargin, containment.margin);
+      else seamMargin = Math.min(seamMargin, containment.margin);
+    }
+  }
+
+  return {
+    minMargin,
+    averageMargin: totalMargin / sampleCount,
+    seamMargin: Number.isFinite(seamMargin) ? seamMargin : minMargin,
+    farMargin: Number.isFinite(farMargin) ? farMargin : minMargin,
+  };
+};
+
+const isSegmentRadiallyContained = (
+  frame: OrientedFrame,
+  footprint: [number, number][],
+  screwCenter: THREE.Vector3,
+  screwDir: THREE.Vector3,
+  basisU: THREE.Vector3,
+  basisV: THREE.Vector3,
+  start: number,
+  end: number,
+  radius: number
+) => {
+  if (end - start <= 1e-5) {
+    return false;
+  }
+
+  const dir = screwDir.clone().normalize();
+  const radialDirections = [
+    basisU.clone(),
+    basisU.clone().multiplyScalar(-1),
+    basisV.clone(),
+    basisV.clone().multiplyScalar(-1),
+    basisU.clone().add(basisV).normalize(),
+    basisU.clone().sub(basisV).normalize(),
+    basisV.clone().sub(basisU).normalize(),
+    basisU.clone().add(basisV).normalize().multiplyScalar(-1),
+  ];
+  const sampleCount = 5;
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const ratio = (i + 0.5) / sampleCount;
+    const t = start + (end - start) * ratio;
+    const basePoint = screwCenter.clone().addScaledVector(dir, t);
+    for (const radialDir of radialDirections) {
+      const testPoint = basePoint.clone().addScaledVector(radialDir, radius);
+      if (!getPointContainmentInFrame(frame, footprint, testPoint)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
 const getIntervalGap = (
   a: { start: number; end: number },
   b: { start: number; end: number }
@@ -730,10 +890,10 @@ const chooseScrewSegment = (
   firstLine: { start: number; end: number },
   secondLine: { start: number; end: number }
 ) => {
-  const firstNearFace = firstLine.end;
-  const secondNearFace = secondLine.start;
-  const seamCenter = (firstNearFace + secondNearFace) / 2;
-  const gap = Math.abs(secondNearFace - firstNearFace);
+  const seamStart = firstLine.end;
+  const seamEnd = secondLine.start;
+  const seamCenter = (seamStart + seamEnd) / 2;
+  const gap = Math.max(0, seamEnd - seamStart);
   const headProtrusion = AUTO_SCREW_HEAD_PROTRUSION;
   const tipInset = 0.05;
 
@@ -741,6 +901,8 @@ const chooseScrewSegment = (
   // first piece = entry side (head side), second piece = destination side.
   const entryStart = firstLine.start - headProtrusion;
   const maxEndInsideSecond = secondLine.end - tipInset;
+  const firstThickness = Math.max(0.001, firstLine.end - firstLine.start);
+  const secondThickness = Math.max(0.001, secondLine.end - secondLine.start);
 
   if (maxEndInsideSecond - entryStart < AUTO_SCREW_MIN_PENETRATION * 2) {
     return null;
@@ -761,6 +923,7 @@ const chooseScrewSegment = (
     const requiredPenetration = getRequiredScrewPenetration(preset.length);
     const segmentStart = entryStart;
     const segmentEnd = segmentStart + preset.length;
+    const availableRun = maxEndInsideSecond - segmentStart;
 
     // Never allow the screw to exit the far side of the destination piece.
     if (segmentEnd > maxEndInsideSecond + 1e-6) {
@@ -779,17 +942,30 @@ const chooseScrewSegment = (
     }
 
     const center = (segmentStart + segmentEnd) / 2;
-    const secondThickness = Math.max(0.001, secondLine.end - secondLine.start);
-    const targetSecondPenetration = Math.min(secondThickness - tipInset, Math.max(requiredPenetration, secondThickness * 0.72));
+    const preferredSecondPenetration = Math.min(
+      secondThickness - tipInset,
+      Math.max(requiredPenetration, secondThickness * 0.58)
+    );
+    const targetSecondPenetration = Math.min(
+      secondThickness - tipInset,
+      Math.max(preferredSecondPenetration, secondThickness * 0.72)
+    );
+    const desiredLength = headProtrusion + firstThickness + targetSecondPenetration + Math.max(0, gap);
     const secondPenetrationBias = Math.abs(overlapSecond - targetSecondPenetration);
+    const lengthWaste = Math.max(0, preset.length - desiredLength);
+    const underReachPenalty = Math.max(0, preferredSecondPenetration - overlapSecond);
+    const firstEngagementBias = Math.abs(overlapFirst - Math.min(firstThickness, Math.max(requiredPenetration, firstThickness * 0.75)));
 
     const score =
-      overlapFirst
-      + overlapSecond * 1.35
-      - gap * 0.45
-      - secondPenetrationBias * 0.8
-      - Math.abs(preset.length - 2.5) * 0.05
-      - Math.abs(center - seamCenter) * 0.03;
+      overlapSecond * 2.2
+      + overlapFirst * 0.85
+      - gap * 0.65
+      - secondPenetrationBias * 1.9
+      - underReachPenalty * 2.6
+      - firstEngagementBias * 0.5
+      - lengthWaste * 0.85
+      - Math.abs(preset.length - availableRun) * 0.08
+      - Math.abs(center - seamCenter) * 0.05;
 
     if (!best || score > best.score) {
       best = {
@@ -808,21 +984,30 @@ const chooseScrewSegment = (
 
 const getSampleCoords = (min: number, max: number) => {
   const span = max - min;
-  const center = (min + max) / 2;
-  const values = [center];
+  if (span <= AUTO_SCREW_OVERLAP_MIN) {
+    return [];
+  }
 
-  if (span >= 0.32) {
-    values.push(min + span * 0.25, max - span * 0.25);
+  const center = (min + max) / 2;
+  const desiredPadding = Math.min(0.4, span * 0.22);
+  const padding = Math.min(desiredPadding, Math.max(0.02, span * 0.12));
+  let innerMin = min + padding;
+  let innerMax = max - padding;
+  if (innerMax - innerMin < 0.08) {
+    innerMin = min + span * 0.08;
+    innerMax = max - span * 0.08;
   }
-  if (span >= 0.55) {
-    values.push(min + span * 0.18, max - span * 0.18);
+  if (innerMax <= innerMin) {
+    return [center];
   }
-  if (span >= 1.2) {
-    values.push(min + span * 0.33, max - span * 0.33);
+
+  const sampleCount = span >= 3.2 ? 6 : span >= 1.8 ? 5 : span >= 0.75 ? 4 : 3;
+  const values: number[] = [];
+  for (let i = 0; i < sampleCount; i += 1) {
+    const ratio = sampleCount === 1 ? 0.5 : i / (sampleCount - 1);
+    values.push(innerMin + (innerMax - innerMin) * ratio);
   }
-  if (span >= 2.6) {
-    values.push(min + span * 0.08, max - span * 0.08);
-  }
+  values.push(center);
 
   const sorted = values.sort((a, b) => a - b);
   const deduped: number[] = [];
@@ -909,6 +1094,24 @@ const clampAutoScrewCount = (value: number) => {
 
 const formatScrewCountLabel = (count: number) => (count === 1 ? '1 screw' : `${count} screws`);
 
+const getPlacementSafetyScore = (placement: AutoScrewPlacementCandidate) => {
+  const destinationCore = Math.min(
+    placement.secondContainment.minMargin,
+    placement.secondContainment.seamMargin
+  );
+  const entryCore = Math.min(
+    placement.firstContainment.minMargin,
+    placement.firstContainment.averageMargin
+  );
+  return (
+    destinationCore * 2.8
+    + placement.secondContainment.averageMargin * 2.1
+    + placement.secondContainment.farMargin * 0.9
+    + entryCore * 0.9
+    + placement.edgeMargin * 0.75
+  );
+};
+
 const chooseBestPlacementSet = (
   possiblePlacements: AutoScrewPlacementCandidate[],
   requestedCount: number,
@@ -923,121 +1126,232 @@ const chooseBestPlacementSet = (
     return null;
   }
 
-  if (requestedCount === 1) {
-    const directionBonus = options.dirAlignment * 0.6 - options.alongOverlap * 0.4;
-    let bestSingle:
+  const directionBonus = options.dirAlignment * 0.8 - options.alongOverlap * 0.45;
+  const getPlacementQuality = (placement: AutoScrewPlacementCandidate) =>
+    placement.score + getPlacementSafetyScore(placement) * 1.3;
+  const ranked = [...possiblePlacements].sort((a, b) => {
+    const scoreA = getPlacementQuality(a);
+    const scoreB = getPlacementQuality(b);
+    return scoreB - scoreA;
+  });
+  const uValues = possiblePlacements.map((placement) => placement.u);
+  const vValues = possiblePlacements.map((placement) => placement.v);
+  const uRange = Math.max(...uValues) - Math.min(...uValues);
+  const vRange = Math.max(...vValues) - Math.min(...vValues);
+  const majorAxis: 'u' | 'v' = uRange >= vRange ? 'u' : 'v';
+  const minorAxis: 'u' | 'v' = majorAxis === 'u' ? 'v' : 'u';
+  const majorMin = Math.min(...possiblePlacements.map((placement) => placement[majorAxis]));
+  const majorMax = Math.max(...possiblePlacements.map((placement) => placement[majorAxis]));
+  const minorMin = Math.min(...possiblePlacements.map((placement) => placement[minorAxis]));
+  const minorMax = Math.max(...possiblePlacements.map((placement) => placement[minorAxis]));
+  const majorSpan = majorMax - majorMin;
+  const minorSpan = minorMax - minorMin;
+  const majorPadBase = Math.min(0.5, majorSpan * 0.18);
+  const majorPad = Math.min(majorPadBase, Math.max(0.02, majorSpan * 0.08));
+  const majorInnerMin = majorMin + majorPad;
+  const majorInnerMax = majorMax - majorPad;
+  const majorTargetMin = majorInnerMax > majorInnerMin ? majorInnerMin : majorMin;
+  const majorTargetMax = majorInnerMax > majorInnerMin ? majorInnerMax : majorMax;
+  const minorCenter = (minorMin + minorMax) / 2;
+  const useGridLayout =
+    requestedCount === 4
+    && Math.min(uRange, vRange) >= Math.max(0.35, Math.max(uRange, vRange) * 0.32);
+
+  const getTargetLayouts = () => {
+    if (requestedCount === 1) {
+      return [[{ major: (majorMin + majorMax) / 2, minor: minorCenter }]];
+    }
+
+    if (useGridLayout) {
+      const uPad = Math.min(0.35, uRange * 0.18);
+      const vPad = Math.min(0.35, vRange * 0.18);
+      const uTargets = [
+        uRange > uPad * 2 ? Math.min(...uValues) + uPad : (Math.min(...uValues) + Math.max(...uValues)) / 2,
+        uRange > uPad * 2 ? Math.max(...uValues) - uPad : (Math.min(...uValues) + Math.max(...uValues)) / 2,
+      ];
+      const vTargets = [
+        vRange > vPad * 2 ? Math.min(...vValues) + vPad : (Math.min(...vValues) + Math.max(...vValues)) / 2,
+        vRange > vPad * 2 ? Math.max(...vValues) - vPad : (Math.min(...vValues) + Math.max(...vValues)) / 2,
+      ];
+      return [[
+        { major: uTargets[0], minor: vTargets[0] },
+        { major: uTargets[1], minor: vTargets[0] },
+        { major: uTargets[0], minor: vTargets[1] },
+        { major: uTargets[1], minor: vTargets[1] },
+      ]];
+    }
+
+    const lineTargets = Array.from({ length: requestedCount }, (_, index) => {
+      const ratio = requestedCount === 1 ? 0.5 : index / (requestedCount - 1);
+      return {
+        major: majorTargetMin + (majorTargetMax - majorTargetMin) * ratio,
+        minor: minorCenter,
+      };
+    });
+    const centeredTargets = Array.from({ length: requestedCount }, (_, index) => {
+      const ratio = requestedCount === 1 ? 0.5 : index / (requestedCount - 1);
+      const centerWeightedRatio = 0.18 + ratio * 0.64;
+      return {
+        major: majorMin + majorSpan * centerWeightedRatio,
+        minor: minorCenter,
+      };
+    });
+    return [lineTargets, centeredTargets];
+  };
+
+  const trySelect = (minSpacing: number) => {
+    const selected: AutoScrewPlacementCandidate[] = [];
+    for (const candidate of ranked) {
+      const spacedEnough = selected.every((placed) => {
+        const du = Math.abs(candidate.u - placed.u);
+        const dv = Math.abs(candidate.v - placed.v);
+        return Math.max(du, dv) >= minSpacing;
+      });
+      if (!spacedEnough) {
+        continue;
+      }
+      selected.push(candidate);
+      if (selected.length === requestedCount) {
+        break;
+      }
+    }
+    if (selected.length < requestedCount) {
+      return null;
+    }
+
+    const uValues = selected.map((placement) => placement.u);
+    const vValues = selected.map((placement) => placement.v);
+    const spreadMajor = Math.max(
+      Math.max(...uValues) - Math.min(...uValues),
+      Math.max(...vValues) - Math.min(...vValues)
+    );
+    const comboScore =
+      selected.reduce(
+        (sum, placement) => sum + placement.score + getPlacementSafetyScore(placement) * 0.9,
+        0
+      )
+      + spreadMajor * 0.3
+      + minSpacing * 0.15
+      + directionBonus;
+
+    return {
+      placements: selected,
+      score: comboScore,
+    };
+  };
+
+  const trySelectAnchored = (minSpacing: number) => {
+    let best:
       | {
           placements: AutoScrewPlacementCandidate[];
           score: number;
         }
       | null = null;
-    for (const placement of possiblePlacements) {
-      const singleScore = placement.score + placement.edgeMargin * 0.16 + directionBonus;
-      if (!bestSingle || singleScore > bestSingle.score) {
-        bestSingle = {
-          placements: [placement],
-          score: singleScore,
+
+    for (const targets of getTargetLayouts()) {
+      const chosen: AutoScrewPlacementCandidate[] = [];
+      const used = new Set<number>();
+      let totalDeviation = 0;
+
+      for (const target of targets) {
+        let bestIndex = -1;
+        let bestTargetScore = -Infinity;
+
+        for (let i = 0; i < ranked.length; i += 1) {
+          if (used.has(i)) continue;
+          const candidate = ranked[i];
+          const spacedEnough = chosen.every((placed) => {
+            const du = Math.abs(candidate.u - placed.u);
+            const dv = Math.abs(candidate.v - placed.v);
+            return Math.max(du, dv) >= minSpacing;
+          });
+          if (!spacedEnough) {
+            continue;
+          }
+
+          const candidateMajor = useGridLayout
+            ? candidate.u
+            : candidate[majorAxis];
+          const candidateMinor = useGridLayout
+            ? candidate.v
+            : candidate[minorAxis];
+          const majorDistance = Math.abs(candidateMajor - target.major);
+          const minorDistance = Math.abs(candidateMinor - target.minor);
+          const targetScore =
+            getPlacementQuality(candidate)
+            - majorDistance * 3.4
+            - minorDistance * (useGridLayout ? 2.4 : 1.35);
+
+          if (targetScore > bestTargetScore) {
+            bestTargetScore = targetScore;
+            bestIndex = i;
+          }
+        }
+
+        if (bestIndex < 0) {
+          chosen.length = 0;
+          break;
+        }
+
+        const picked = ranked[bestIndex];
+        used.add(bestIndex);
+        chosen.push(picked);
+        const pickedMajor = useGridLayout ? picked.u : picked[majorAxis];
+        const pickedMinor = useGridLayout ? picked.v : picked[minorAxis];
+        totalDeviation +=
+          Math.abs(pickedMajor - target.major)
+          + Math.abs(pickedMinor - target.minor) * (useGridLayout ? 1.2 : 0.65);
+      }
+
+      if (chosen.length < requestedCount) {
+        continue;
+      }
+
+      const chosenU = chosen.map((placement) => placement.u);
+      const chosenV = chosen.map((placement) => placement.v);
+      const spreadMajor = Math.max(
+        Math.max(...chosenU) - Math.min(...chosenU),
+        Math.max(...chosenV) - Math.min(...chosenV)
+      );
+      const comboScore =
+        chosen.reduce(
+          (sum, placement) => sum + placement.score + getPlacementSafetyScore(placement) * 0.95,
+          0
+        )
+        + spreadMajor * 0.42
+        + minSpacing * 0.18
+        + directionBonus
+        - totalDeviation * 0.95;
+
+      if (!best || comboScore > best.score) {
+        best = {
+          placements: chosen,
+          score: comboScore,
         };
       }
     }
-    return bestSingle;
-  }
 
-  const sortedByQuality = [...possiblePlacements].sort((a, b) => b.score - a.score);
-  const poolLimit = requestedCount === 4 ? 24 : 20;
-  const pool = sortedByQuality.slice(0, Math.min(sortedByQuality.length, poolLimit));
-  if (pool.length < requestedCount) {
-    return null;
-  }
-
-  const evaluateWithMinSpacing = (minSpacing: number) => {
-    let bestSet:
-      | {
-          placements: AutoScrewPlacementCandidate[];
-          score: number;
-        }
-      | null = null;
-
-    const active: AutoScrewPlacementCandidate[] = [];
-    const recurse = (startIndex: number) => {
-      if (active.length === requestedCount) {
-        const baseScore = active.reduce((sum, placement) => sum + placement.score, 0);
-        let pairwiseScore = 0;
-        let tightestMajorDelta = Infinity;
-
-        for (let i = 0; i < active.length; i += 1) {
-          for (let j = i + 1; j < active.length; j += 1) {
-            const p1 = active[i];
-            const p2 = active[j];
-            const du = Math.abs(p1.u - p2.u);
-            const dv = Math.abs(p1.v - p2.v);
-            const majorDelta = Math.max(du, dv);
-            const minorDelta = Math.min(du, dv);
-            pairwiseScore +=
-              majorDelta * 0.26
-              + (options.tightSpace ? (majorDelta - minorDelta) * 0.2 : minorDelta * 0.11)
-              + Math.min(p1.edgeMargin, p2.edgeMargin) * 0.1;
-            tightestMajorDelta = Math.min(tightestMajorDelta, majorDelta);
-          }
-        }
-
-        const uValues = active.map((placement) => placement.u);
-        const vValues = active.map((placement) => placement.v);
-        const uRange = Math.max(...uValues) - Math.min(...uValues);
-        const vRange = Math.max(...vValues) - Math.min(...vValues);
-        const spreadScore =
-          Math.max(uRange, vRange) * 0.34
-          + Math.min(uRange, vRange) * (options.tightSpace ? 0.06 : 0.17);
-        const directionBonus = options.dirAlignment * 0.6 - options.alongOverlap * 0.4;
-        const spacingBonus = (Number.isFinite(tightestMajorDelta) ? tightestMajorDelta : 0) * 0.18;
-        const comboScore = baseScore + pairwiseScore + spreadScore + spacingBonus + directionBonus;
-
-        if (!bestSet || comboScore > bestSet.score) {
-          bestSet = {
-            placements: [...active],
-            score: comboScore,
-          };
-        }
-        return;
-      }
-
-      const needed = requestedCount - active.length;
-      for (let i = startIndex; i <= pool.length - needed; i += 1) {
-        const candidate = pool[i];
-        let valid = true;
-        for (const selected of active) {
-          const du = Math.abs(candidate.u - selected.u);
-          const dv = Math.abs(candidate.v - selected.v);
-          const majorDelta = Math.max(du, dv);
-          if (majorDelta < minSpacing) {
-            valid = false;
-            break;
-          }
-        }
-        if (!valid) {
-          continue;
-        }
-        active.push(candidate);
-        recurse(i + 1);
-        active.pop();
-      }
-    };
-
-    recurse(0);
-    return bestSet;
+    return best;
   };
 
-  const preferredMinSpacing = Math.max(
-    0.12,
-    options.targetSpacing * (options.tightSpace ? 0.45 : 0.55)
-  );
-  const strictBest = evaluateWithMinSpacing(preferredMinSpacing);
-  if (strictBest) {
-    return strictBest;
+  const spacingAttempts = [
+    Math.max(0.12, options.targetSpacing * (options.tightSpace ? 0.52 : 0.62)),
+    Math.max(0.08, options.targetSpacing * (options.tightSpace ? 0.34 : 0.42)),
+    0,
+  ];
+
+  for (const spacing of spacingAttempts) {
+    const anchored = trySelectAnchored(spacing);
+    if (anchored) {
+      return anchored;
+    }
+    const selected = trySelect(spacing);
+    if (selected) {
+      return selected;
+    }
   }
 
-  const relaxedMinSpacing = Math.max(0.1, preferredMinSpacing * 0.72);
-  return evaluateWithMinSpacing(relaxedMinSpacing);
+  return null;
 };
 
 interface AppState {
@@ -1393,7 +1707,7 @@ export const useStore = create<AppState>((set) => ({
         }
         foundTouchingDirection = true;
 
-        const basisCandidates = getBasisCandidatesForDirection(dir);
+        const basisCandidates = [getBasisForDirection(dir)];
         for (const basis of basisCandidates) {
           const uFirst = getProjectedRange(firstFrame, basis.u);
           const uSecond = getProjectedRange(secondFrame, basis.u);
@@ -1418,7 +1732,6 @@ export const useStore = create<AppState>((set) => ({
           const minEdgeClearance = Math.max(0.08, Math.min(0.32, minOverlap * 0.2));
 
           const possiblePlacements: AutoScrewPlacementCandidate[] = [];
-
           for (const uVal of uSamples) {
             for (const vVal of vSamples) {
               const linePoint = new THREE.Vector3()
@@ -1466,7 +1779,66 @@ export const useStore = create<AppState>((set) => ({
               ) {
                 continue;
               }
-              const edgeMargin = Math.min(
+
+              const screwStart = -chosenSegment.preset.length / 2;
+              const screwEnd = chosenSegment.preset.length / 2;
+              const firstLineRelative = {
+                start: firstLine.start - chosenSegment.center,
+                end: firstLine.end - chosenSegment.center,
+              };
+              const secondLineRelative = {
+                start: secondLine.start - chosenSegment.center,
+                end: secondLine.end - chosenSegment.center,
+              };
+              const firstContainment = summarizeSegmentContainment(
+                firstFrame,
+                firstFootprint,
+                screwCenter,
+                basis.dir,
+                Math.max(screwStart, firstLineRelative.start),
+                Math.min(screwEnd, firstLineRelative.end),
+                false
+              );
+              const secondContainment = summarizeSegmentContainment(
+                secondFrame,
+                secondFootprint,
+                screwCenter,
+                basis.dir,
+                Math.max(screwStart, secondLineRelative.start),
+                Math.min(screwEnd, secondLineRelative.end),
+                true
+              );
+              if (!firstContainment || !secondContainment) {
+                continue;
+              }
+              const radialContainmentRadius = chosenSegment.preset.diameter * 0.52;
+              const firstRadiallyContained = isSegmentRadiallyContained(
+                firstFrame,
+                firstFootprint,
+                screwCenter,
+                basis.dir,
+                basis.u,
+                basis.v,
+                Math.max(screwStart, firstLineRelative.start),
+                Math.min(screwEnd, firstLineRelative.end),
+                radialContainmentRadius
+              );
+              const secondRadiallyContained = isSegmentRadiallyContained(
+                secondFrame,
+                secondFootprint,
+                screwCenter,
+                basis.dir,
+                basis.u,
+                basis.v,
+                Math.max(screwStart, secondLineRelative.start),
+                Math.min(screwEnd, secondLineRelative.end),
+                radialContainmentRadius
+              );
+              if (!firstRadiallyContained || !secondRadiallyContained) {
+                continue;
+              }
+
+              const projectedEdgeMargin = Math.min(
                 uVal - uFirst.min,
                 uFirst.max - uVal,
                 vVal - vFirst.min,
@@ -1476,14 +1848,39 @@ export const useStore = create<AppState>((set) => ({
                 vVal - vSecond.min,
                 vSecond.max - vVal
               );
-              if (edgeMargin < minEdgeClearance) {
-                continue;
-              }
+              const edgeMargin = Math.min(
+                projectedEdgeMargin,
+                firstContainment.minMargin,
+                secondContainment.minMargin
+              );
               const centerBias =
                 Math.abs(uVal - (overlapUMin + overlapUMax) / 2)
                 + Math.abs(vVal - (overlapVMin + overlapVMax) / 2);
               const edgeBonus = Math.max(0, Math.min(0.4, edgeMargin - minEdgeClearance));
               const seamOffset = Math.abs(chosenSegment.center - chosenSegment.seamCenter);
+              const destinationCoreMargin = Math.min(
+                secondContainment.minMargin,
+                secondContainment.seamMargin
+              );
+              const desiredDestinationMargin = Math.max(
+                chosenSegment.preset.diameter * 0.24,
+                0.03
+              );
+              const desiredGeneralMargin = Math.max(
+                chosenSegment.preset.diameter * 0.18,
+                0.025
+              );
+              const edgeRiskPenalty =
+                Math.max(0, desiredDestinationMargin - destinationCoreMargin) * 18
+                + Math.max(0, desiredGeneralMargin - secondContainment.averageMargin) * 10
+                + Math.max(0, desiredGeneralMargin - edgeMargin) * 9
+                + Math.max(0, 0.02 - firstContainment.minMargin) * 7;
+              const containmentBonus =
+                firstContainment.averageMargin * 0.4
+                + secondContainment.averageMargin * 1.6
+                + secondContainment.seamMargin * 2.35
+                + secondContainment.farMargin * 0.9
+                + Math.min(firstContainment.minMargin, secondContainment.minMargin) * 0.45;
 
               possiblePlacements.push({
                 center: screwCenter,
@@ -1491,6 +1888,8 @@ export const useStore = create<AppState>((set) => ({
                 u: uVal,
                 v: vVal,
                 edgeMargin,
+                firstContainment,
+                secondContainment,
                 score:
                   chosenSegment.overlapFirst
                   + chosenSegment.overlapSecond
@@ -1498,8 +1897,10 @@ export const useStore = create<AppState>((set) => ({
                   + penetrationSecond
                   - lineGap * 1.75
                   - seamOffset * 0.2
-                  - centerBias * 0.06
-                  + edgeBonus * 0.8,
+                  - centerBias * 0.08
+                  - edgeRiskPenalty
+                  + edgeBonus * 0.45
+                  + containmentBonus,
               });
             }
           }
@@ -1513,59 +1914,12 @@ export const useStore = create<AppState>((set) => ({
           const targetSpacing = tightSpace
             ? Math.max(0.16, Math.min(0.8, maxOverlap * 0.26))
             : Math.max(0.3, Math.min(1.4, maxOverlap * 0.35));
-          let selectedSet:
-            | {
-                placements: AutoScrewPlacementCandidate[];
-                score: number;
-              }
-            | null = null;
-          if (targetScrewCount === AUTO_SCREW_DEFAULT_COUNT) {
-            let bestPair:
-              | {
-                  first: AutoScrewPlacementCandidate;
-                  second: AutoScrewPlacementCandidate;
-                  pairScore: number;
-                }
-              | null = null;
-
-            for (let i = 0; i < possiblePlacements.length; i += 1) {
-              for (let j = i + 1; j < possiblePlacements.length; j += 1) {
-                const p1 = possiblePlacements[i];
-                const p2 = possiblePlacements[j];
-                const du = Math.abs(p1.u - p2.u);
-                const dv = Math.abs(p1.v - p2.v);
-                const majorDelta = Math.max(du, dv);
-                const minorDelta = Math.min(du, dv);
-                if (majorDelta < targetSpacing) {
-                  continue;
-                }
-
-                const orientationBonus = tightSpace
-                  ? (majorDelta - minorDelta) * 0.3 - minorDelta * 0.08
-                  : minorDelta * 0.12;
-                const edgePairBonus = Math.min(p1.edgeMargin, p2.edgeMargin) * 0.12;
-                const directionBonus = dirAlignment * 0.6 - alongOverlap * 0.4;
-                const pairScore = p1.score + p2.score + majorDelta * 0.32 + orientationBonus + edgePairBonus + directionBonus;
-                if (!bestPair || pairScore > bestPair.pairScore) {
-                  bestPair = { first: p1, second: p2, pairScore };
-                }
-              }
-            }
-
-            if (bestPair) {
-              selectedSet = {
-                placements: [bestPair.first, bestPair.second],
-                score: bestPair.pairScore,
-              };
-            }
-          } else {
-            selectedSet = chooseBestPlacementSet(possiblePlacements, targetScrewCount, {
-              targetSpacing,
-              tightSpace,
-              dirAlignment,
-              alongOverlap,
-            });
-          }
+          const selectedSet = chooseBestPlacementSet(possiblePlacements, targetScrewCount, {
+            targetSpacing,
+            tightSpace,
+            dirAlignment,
+            alongOverlap,
+          });
 
           if (!selectedSet) {
             continue;
@@ -1637,6 +1991,9 @@ export const useStore = create<AppState>((set) => ({
         if (!firstLine || !secondLine) {
           return false;
         }
+        if (getIntervalGap(firstLine, secondLine) > AUTO_SCREW_CONTACT_GAP_TOLERANCE) {
+          return false;
+        }
         const segStart = -screwLength / 2;
         const segEnd = screwLength / 2;
         const overlapFirstLine = getIntervalOverlap(segStart, segEnd, firstLine.start, firstLine.end);
@@ -1659,9 +2016,56 @@ export const useStore = create<AppState>((set) => ({
           screwDir,
           screwLength
         );
+        const firstContainment = summarizeSegmentContainment(
+          firstFrame,
+          firstFootprint,
+          screwCenter,
+          screwDir,
+          Math.max(segStart, firstLine.start),
+          Math.min(segEnd, firstLine.end),
+          false
+        );
+        const secondContainment = summarizeSegmentContainment(
+          secondFrame,
+          secondFootprint,
+          screwCenter,
+          screwDir,
+          Math.max(segStart, secondLine.start),
+          Math.min(segEnd, secondLine.end),
+          true
+        );
+        if (!firstContainment || !secondContainment) {
+          return false;
+        }
+        const basis = getBasisForDirection(screwDir);
+        const radialContainmentRadius = screw.dimensions[0] * 0.52;
+        const firstRadiallyContained = isSegmentRadiallyContained(
+          firstFrame,
+          firstFootprint,
+          screwCenter,
+          screwDir,
+          basis.u,
+          basis.v,
+          Math.max(segStart, firstLine.start),
+          Math.min(segEnd, firstLine.end),
+          radialContainmentRadius
+        );
+        const secondRadiallyContained = isSegmentRadiallyContained(
+          secondFrame,
+          secondFootprint,
+          screwCenter,
+          screwDir,
+          basis.u,
+          basis.v,
+          Math.max(segStart, secondLine.start),
+          Math.min(segEnd, secondLine.end),
+          radialContainmentRadius
+        );
         return (
           penetrationFirst >= requiredPenetration
           && penetrationSecond >= requiredPenetration
+          && firstRadiallyContained
+          && secondRadiallyContained
         );
       });
 
