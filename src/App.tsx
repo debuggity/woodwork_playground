@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Workbench } from './components/Workbench';
 import standingDeskTopperProject from './data/standingDeskTopper.json';
 import {
@@ -163,10 +163,34 @@ const BLOG_POST_BY_SLUG = BLOG_POSTS.reduce<Record<string, BlogPost>>((acc, post
   return acc;
 }, {});
 
+const routeToPath = (route: AppRoute) => {
+  if (route.page === 'home') return '/';
+  if (route.page === 'blog' && route.blogSlug) return `/blog/${route.blogSlug}`;
+  return `/${route.page}`;
+};
+
 const routeToHash = (route: AppRoute) => {
   if (route.page === 'home') return '#/';
   if (route.page === 'blog' && route.blogSlug) return `#/blog/${route.blogSlug}`;
   return `#/${route.page}`;
+};
+
+const usesHashRouting = () => (
+  typeof window !== 'undefined'
+  && (import.meta.env.DEV || /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname))
+);
+
+const routeToRelativeUrl = (route: AppRoute) => {
+  if (typeof window === 'undefined') return routeToPath(route);
+  if (usesHashRouting()) {
+    return `/${window.location.search}${routeToHash(route)}`;
+  }
+  return `${routeToPath(route)}${window.location.search}`;
+};
+
+const routeToAbsoluteUrl = (route: AppRoute) => {
+  if (typeof window === 'undefined') return routeToPath(route);
+  return `${window.location.origin}${routeToRelativeUrl(route)}`;
 };
 
 const getDocumentTitle = (route: AppRoute) => {
@@ -210,10 +234,14 @@ const normalizeRouteValue = (value: string): AppRoute | null => {
 const getInitialRoute = (): AppRoute => {
   if (typeof window === 'undefined') return { page: 'home' };
   const hashRoute = normalizeRouteValue(window.location.hash);
-  if (hashRoute) return hashRoute;
-
   const pathRoute = normalizeRouteValue(window.location.pathname);
-  if (pathRoute) return pathRoute;
+  if (usesHashRouting()) {
+    if (hashRoute) return hashRoute;
+    if (pathRoute) return pathRoute;
+  } else {
+    if (pathRoute) return pathRoute;
+    if (hashRoute) return hashRoute;
+  }
   return { page: 'home' };
 };
 
@@ -2006,7 +2034,7 @@ const AdvancedFeaturesBlog = ({ openApp, backToBlog }: { openApp: () => void; ba
         </p>
         <button
           onClick={() => {
-            const appUrl = `${window.location.origin}${window.location.pathname}#/app`;
+            const appUrl = routeToAbsoluteUrl({ page: 'app' });
             window.open(appUrl, '_blank', 'noopener,noreferrer');
           }}
           className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -2307,7 +2335,7 @@ const StandingDeskTopperStoryBlog = ({ openApp, backToBlog }: { openApp: () => v
     window.localStorage.setItem(PENDING_PROJECT_IMPORT_PAYLOAD_KEY, JSON.stringify(standingDeskTopperProject));
     window.localStorage.setItem(PENDING_PROJECT_IMPORT_KEY, STANDING_DESK_TOPPER_IMPORT_ASSET);
     if (openInNewTab) {
-      const appUrl = `${window.location.origin}${window.location.pathname}#/app`;
+      const appUrl = routeToAbsoluteUrl({ page: 'app' });
       window.open(appUrl, '_blank', 'noopener,noreferrer');
       return;
     }
@@ -2636,19 +2664,68 @@ const CookieConsentBanner = ({ navigate }: { navigate: (route: RouteId) => void 
 export function App() {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute);
 
-  useEffect(() => {
-    const onHashChange = () => {
-      const next = normalizeRouteValue(window.location.hash);
-      setRoute(next ?? { page: 'home' });
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+  const updateBrowserRoute = useCallback((nextRoute: AppRoute, mode: 'push' | 'replace' = 'push') => {
+    if (typeof window === 'undefined') {
+      setRoute(nextRoute);
+      return;
+    }
+
+    const nextUrl = routeToRelativeUrl(nextRoute);
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentUrl !== nextUrl) {
+      window.history[mode === 'replace' ? 'replaceState' : 'pushState']({}, '', nextUrl);
+    }
+
+    setRoute(nextRoute);
   }, []);
 
   useEffect(() => {
-    const expectedHash = routeToHash(route);
-    if (window.location.hash !== expectedHash) {
-      window.location.hash = expectedHash;
+    if (usesHashRouting()) {
+      const onHashChange = () => {
+        const next = normalizeRouteValue(window.location.hash) ?? normalizeRouteValue(window.location.pathname);
+        setRoute(next ?? { page: 'home' });
+      };
+
+      onHashChange();
+      window.addEventListener('hashchange', onHashChange);
+      return () => {
+        window.removeEventListener('hashchange', onHashChange);
+      };
+    }
+
+    const syncRouteFromLocation = () => {
+      const next = normalizeRouteValue(window.location.pathname) ?? normalizeRouteValue(window.location.hash);
+      setRoute(next ?? { page: 'home' });
+    };
+
+    const legacyHashRoute = normalizeRouteValue(window.location.hash);
+    if (legacyHashRoute) {
+      updateBrowserRoute(legacyHashRoute, 'replace');
+    } else {
+      syncRouteFromLocation();
+    }
+
+    window.addEventListener('popstate', syncRouteFromLocation);
+    return () => {
+      window.removeEventListener('popstate', syncRouteFromLocation);
+    };
+  }, [updateBrowserRoute]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (usesHashRouting()) {
+      const expectedUrl = `/${window.location.search}${routeToHash(route)}`;
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (currentUrl !== expectedUrl) {
+        window.history.replaceState({}, '', expectedUrl);
+      }
+      return;
+    }
+
+    const expectedUrl = routeToRelativeUrl(route);
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentUrl !== expectedUrl) {
+      window.history.replaceState({}, '', expectedUrl);
     }
   }, [route]);
 
@@ -2656,13 +2733,13 @@ export function App() {
     document.title = getDocumentTitle(route);
   }, [route]);
 
-  const navigate = (nextRoute: RouteId) => setRoute({ page: nextRoute });
-  const openBlogPost = (slug: string) => setRoute({ page: 'blog', blogSlug: slug });
+  const navigate = (nextRoute: RouteId) => updateBrowserRoute({ page: nextRoute });
+  const openBlogPost = (slug: string) => updateBrowserRoute({ page: 'blog', blogSlug: slug });
   const activePage = route.page;
 
   const page = useMemo(() => {
     if (activePage === 'home') {
-      return <HomePage openApp={() => navigate('app')} openPost={(slug) => setRoute({ page: 'blog', blogSlug: slug })} />;
+      return <HomePage openApp={() => navigate('app')} openPost={(slug) => updateBrowserRoute({ page: 'blog', blogSlug: slug })} />;
     }
     if (activePage === 'blog') {
       const post = route.blogSlug ? BLOG_POST_BY_SLUG[route.blogSlug] : null;

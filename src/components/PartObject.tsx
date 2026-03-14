@@ -101,6 +101,144 @@ const getFootprintPoints = (part: PartData): [number, number][] => {
   ];
 };
 
+const isPointOnSegment2d = (
+  point: [number, number],
+  start: [number, number],
+  end: [number, number],
+  epsilon = 1e-4
+) => {
+  const [px, pz] = point;
+  const [x1, z1] = start;
+  const [x2, z2] = end;
+  const cross = (px - x1) * (z2 - z1) - (pz - z1) * (x2 - x1);
+  if (Math.abs(cross) > epsilon) return false;
+  const dot = (px - x1) * (px - x2) + (pz - z1) * (pz - z2);
+  return dot <= epsilon;
+};
+
+const pointInPolygonOrOnEdge = (x: number, z: number, points: [number, number][]) => {
+  let inside = false;
+  const testPoint: [number, number] = [x, z];
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const a = points[i];
+    const b = points[j];
+    if (isPointOnSegment2d(testPoint, a, b)) {
+      return true;
+    }
+
+    const intersects = ((a[1] > z) !== (b[1] > z))
+      && (x < ((b[0] - a[0]) * (z - a[1])) / ((b[1] - a[1]) || Number.EPSILON) + a[0]);
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+};
+
+const createFootprintHeatOverlayGeometry = (
+  points: [number, number][],
+  width: number,
+  height: number,
+  depth: number
+) => {
+  const segX = getOverlaySegmentCount(width);
+  const segZ = getOverlaySegmentCount(depth);
+  const stepX = width / segX;
+  const stepZ = depth / segZ;
+  const halfH = height / 2;
+  const overlayOffset = Math.max(0.01, Math.min(Math.max(height, 0.25) * 0.04, 0.035));
+  const positions: number[] = [];
+  const indices: number[] = [];
+  let vertexIndex = 0;
+  const signedArea = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point[0] * next[1] - next[0] * point[1];
+  }, 0);
+  const isCounterClockwise = signedArea >= 0;
+
+  const pushSurface = (y: number, invert = false) => {
+    for (let ix = 0; ix < segX; ix += 1) {
+      const x0 = -width / 2 + ix * stepX;
+      const x1 = x0 + stepX;
+      for (let iz = 0; iz < segZ; iz += 1) {
+        const z0 = -depth / 2 + iz * stepZ;
+        const z1 = z0 + stepZ;
+        const quad: [number, number][] = [
+          [x0, z0],
+          [x1, z0],
+          [x1, z1],
+          [x0, z1],
+        ];
+        const center: [number, number] = [(x0 + x1) / 2, (z0 + z1) / 2];
+        const insideCount = quad.filter(([x, z]) => pointInPolygonOrOnEdge(x, z, points)).length;
+        if (insideCount < 3 && !pointInPolygonOrOnEdge(center[0], center[1], points)) {
+          continue;
+        }
+
+        positions.push(
+          x0, y, z0,
+          x1, y, z0,
+          x1, y, z1,
+          x0, y, z1
+        );
+        if (invert) {
+          indices.push(
+            vertexIndex, vertexIndex + 1, vertexIndex + 2,
+            vertexIndex, vertexIndex + 2, vertexIndex + 3
+          );
+        } else {
+          indices.push(
+            vertexIndex, vertexIndex + 2, vertexIndex + 1,
+            vertexIndex, vertexIndex + 3, vertexIndex + 2
+          );
+        }
+        vertexIndex += 4;
+      }
+    }
+  };
+
+  const pushSide = (start: [number, number], end: [number, number]) => {
+    const topY = halfH + overlayOffset;
+    const bottomY = -halfH - overlayOffset;
+
+    positions.push(
+      start[0], topY, start[1],
+      end[0], topY, end[1],
+      end[0], bottomY, end[1],
+      start[0], bottomY, start[1]
+    );
+
+    if (isCounterClockwise) {
+      indices.push(
+        vertexIndex, vertexIndex + 2, vertexIndex + 1,
+        vertexIndex, vertexIndex + 3, vertexIndex + 2
+      );
+    } else {
+      indices.push(
+        vertexIndex, vertexIndex + 1, vertexIndex + 2,
+        vertexIndex, vertexIndex + 2, vertexIndex + 3
+      );
+    }
+    vertexIndex += 4;
+  };
+
+  pushSurface(halfH + overlayOffset, false);
+  pushSurface(-halfH - overlayOffset, true);
+  for (let i = 0; i < points.length; i += 1) {
+    pushSide(points[i], points[(i + 1) % points.length]);
+  }
+
+  if (positions.length === 0) {
+    return new THREE.BoxGeometry(width, height, depth, segX, Math.max(1, getOverlaySegmentCount(height) - 2), segZ);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+};
+
 const projectPointToSegment = (point: [number, number], start: [number, number], end: [number, number]) => {
   const dx = end[0] - start[0];
   const dz = end[1] - start[1];
@@ -544,6 +682,10 @@ const createHeatOverlaySourceGeometry = (
       Math.max(1, getOverlaySegmentCount(height) - 2),
       getOverlaySegmentCount(depth)
     );
+  }
+
+  if (part.profile.type === 'polygon' || part.profile.type === 'l-cut') {
+    return createFootprintHeatOverlayGeometry(getFootprintPoints(part), width, height, depth);
   }
 
   return fallback.clone();
@@ -1384,6 +1526,7 @@ export const PartObject: React.FC<PartObjectProps> = React.memo(({
               vertexColors
               transparent
               opacity={isSelected ? 0.48 : 0.64}
+              side={THREE.DoubleSide}
               depthTest
               depthWrite={false}
               polygonOffset
