@@ -2527,12 +2527,58 @@ const AboutPage = () => (
   </SectionCard>
 );
 
-const PrivacyPage = () => (
+const PrivacyPage = ({
+  consent,
+  onReopenCookieSettings,
+}: {
+  consent: CookieConsentChoice | null;
+  onReopenCookieSettings: () => void;
+}) => (
   <SectionCard title="Privacy Policy">
-    <p><strong>Last updated:</strong> February 14, 2026</p>
-    <p>We only collect the data needed to run and improve the service.</p>
-    <p>We may use essential cookies for session behavior and optional analytics cookies when you consent.</p>
-    <p>We do not sell your personal information.</p>
+    <p><strong>Last updated:</strong> March 14, 2026</p>
+    <p>
+      {BRAND_NAME} is designed to run with minimal personal data. This page explains what information may be stored or processed when you use the
+      site and app.
+    </p>
+    <p>
+      We use browser storage for core product behavior such as remembering cookie choices, preserving certain app preferences, and queuing project
+      import data that you intentionally open in the planner.
+    </p>
+    <p>
+      We may use essential cookies or similar storage for basic site functionality. We may also use optional analytics or advertising tools in the
+      future, but those should only be enabled according to the consent choices presented to the user where required.
+    </p>
+    <p>
+      If advertising services such as Google AdSense are enabled, those services may use cookies, local storage, device information, IP address,
+      and similar signals to measure traffic, prevent fraud, limit abuse, and personalize or select ads as permitted by law and user consent.
+    </p>
+    <p>
+      We do not sell your personal information. We may share limited technical data with service providers that help host, secure, measure, or
+      operate the site.
+    </p>
+    <p>
+      You can review or change your cookie choice at any time using the control below. Your current saved choice is{' '}
+      <strong>{consent ?? 'not set'}</strong>.
+    </p>
+    <div className="pt-1">
+      <button
+        onClick={onReopenCookieSettings}
+        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+      >
+        Review Cookie Choices
+      </button>
+    </div>
+    <p>
+      For Google advertising products, you can also review how Google uses information from sites or apps that use its services:
+      {' '}<a
+        href="https://policies.google.com/technologies/partner-sites"
+        target="_blank"
+        rel="noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        policies.google.com/technologies/partner-sites
+      </a>
+    </p>
     <p>Contact us for privacy questions at the address listed on the Contact page.</p>
   </SectionCard>
 );
@@ -2620,23 +2666,17 @@ const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: RouteId) =>
   </div>
 );
 
-const CookieConsentBanner = ({ navigate }: { navigate: (route: RouteId) => void }) => {
-  const [consent, setConsent] = useState<CookieConsentChoice | null>(null);
-  const [initialized, setInitialized] = useState(false);
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(COOKIE_CONSENT_KEY);
-    if (stored === 'accepted' || stored === 'declined') {
-      setConsent(stored);
-    }
-    setInitialized(true);
-  }, []);
-
-  const save = (choice: CookieConsentChoice) => {
-    window.localStorage.setItem(COOKIE_CONSENT_KEY, choice);
-    setConsent(choice);
-  };
-
+const CookieConsentBanner = ({
+  consent,
+  initialized,
+  navigate,
+  onSave,
+}: {
+  consent: CookieConsentChoice | null;
+  initialized: boolean;
+  navigate: (route: RouteId) => void;
+  onSave: (choice: CookieConsentChoice) => void;
+}) => {
   if (!initialized || consent) {
     return null;
   }
@@ -2647,10 +2687,10 @@ const CookieConsentBanner = ({ navigate }: { navigate: (route: RouteId) => void 
         We use cookies for core functionality and optional analytics. You can accept or decline optional cookies.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button onClick={() => save('accepted')} className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800">
+        <button onClick={() => onSave('accepted')} className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800">
           Accept
         </button>
-        <button onClick={() => save('declined')} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button onClick={() => onSave('declined')} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Decline
         </button>
         <button onClick={() => navigate('privacy')} className="rounded-md px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50">
@@ -2663,6 +2703,26 @@ const CookieConsentBanner = ({ navigate }: { navigate: (route: RouteId) => void 
 
 export function App() {
   const [route, setRoute] = useState<AppRoute>(getInitialRoute);
+  const [cookieConsent, setCookieConsent] = useState<CookieConsentChoice | null>(null);
+  const [cookieConsentInitialized, setCookieConsentInitialized] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(COOKIE_CONSENT_KEY);
+    if (stored === 'accepted' || stored === 'declined') {
+      setCookieConsent(stored);
+    }
+    setCookieConsentInitialized(true);
+  }, []);
+
+  const saveCookieConsent = useCallback((choice: CookieConsentChoice) => {
+    window.localStorage.setItem(COOKIE_CONSENT_KEY, choice);
+    setCookieConsent(choice);
+  }, []);
+
+  const reopenCookieSettings = useCallback(() => {
+    window.localStorage.removeItem(COOKIE_CONSENT_KEY);
+    setCookieConsent(null);
+  }, []);
 
   const updateBrowserRoute = useCallback((nextRoute: AppRoute, mode: 'push' | 'replace' = 'push') => {
     if (typeof window === 'undefined') {
@@ -2749,18 +2809,23 @@ export function App() {
       return <BlogPage openPost={openBlogPost} />;
     }
     if (activePage === 'about') return <AboutPage />;
-    if (activePage === 'privacy') return <PrivacyPage />;
+    if (activePage === 'privacy') return <PrivacyPage consent={cookieConsent} onReopenCookieSettings={reopenCookieSettings} />;
     if (activePage === 'terms') return <TermsPage />;
     if (activePage === 'contact') return <ContactPage />;
     return null;
-  }, [activePage, route.blogSlug]);
+  }, [activePage, cookieConsent, openBlogPost, reopenCookieSettings, route.blogSlug]);
 
   if (activePage === 'app') {
     return (
       <>
         <Workbench />
         <AppOverlayNav navigate={navigate} activePage={activePage} />
-        <CookieConsentBanner navigate={navigate} />
+        <CookieConsentBanner
+          consent={cookieConsent}
+          initialized={cookieConsentInitialized}
+          navigate={navigate}
+          onSave={saveCookieConsent}
+        />
       </>
     );
   }
@@ -2813,7 +2878,12 @@ export function App() {
       </footer>
 
       <AppOverlayNav navigate={navigate} activePage={activePage} />
-      <CookieConsentBanner navigate={navigate} />
+      <CookieConsentBanner
+        consent={cookieConsent}
+        initialized={cookieConsentInitialized}
+        navigate={navigate}
+        onSave={saveCookieConsent}
+      />
     </div>
   );
 }
