@@ -5,6 +5,7 @@ import { useStore } from '../store';
 import { CutCorner, HardwareKind, PartData } from '../types';
 import { Plus, Ruler, Box, Move3d, RotateCw, ArrowDownToLine, Layers, Search, Settings2, Hammer, MousePointer2, Palette } from 'lucide-react';
 import { clsx } from 'clsx';
+import { formatLengthInputValue, formatLengthStep, getLengthUnitLabel, parseLengthInput } from '../utils/units';
 
 type LibraryCategory = 'lumber' | 'sheet' | 'hardware' | 'staining';
 type PartTemplate = {
@@ -133,7 +134,66 @@ const formatFeetFromInches = (value: number) => {
   return feet.toFixed(1).replace(/\.0$/, '');
 };
 
-const getLumberOptionLabel = (template: PartTemplate) => {
+const MM_PER_INCH = 25.4;
+
+const trimTrailingZeros = (value: string) =>
+  value.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+
+const toMillimeters = (valueInches: number) => valueInches * MM_PER_INCH;
+
+const formatMillimeters = (valueInches: number, digits = 0) => {
+  const millimeters = toMillimeters(valueInches);
+  return trimTrailingZeros(millimeters.toFixed(digits));
+};
+
+const formatMetricLengthValue = (valueInches: number) => formatMillimeters(valueInches, 0);
+
+const formatMetricSmallValue = (valueInches: number) => {
+  const millimeters = toMillimeters(valueInches);
+  const digits = millimeters < 10 && Math.abs(millimeters - Math.round(millimeters)) > 0.05 ? 1 : 0;
+  return formatMillimeters(valueInches, digits);
+};
+
+const getMetricLumberSuffix = (name: string) => {
+  const suffix = name.replace(/^\d+x\d+\s*/i, '').trim();
+  return suffix || 'Lumber';
+};
+
+const getMetricPartDisplayName = (part: PartTemplate | PartData) => {
+  if (part.type === 'lumber') {
+    return `${formatMetricLengthValue(part.dimensions[0])} x ${formatMetricLengthValue(part.dimensions[1])} mm ${getMetricLumberSuffix(part.name)}`;
+  }
+
+  if (part.type === 'sheet') {
+    const baseName = part.name.toLowerCase().includes('mdf') ? 'MDF' : 'Plywood';
+    return `${baseName} ${formatMetricLengthValue(part.dimensions[1])} mm ${formatMetricLengthValue(part.dimensions[0])} x ${formatMetricLengthValue(part.dimensions[2])} mm`;
+  }
+
+  if (part.hardwareKind === 'fastener') {
+    return `${formatMetricSmallValue(part.dimensions[0])} x ${formatMetricLengthValue(part.dimensions[1])} mm Wood Screw`;
+  }
+
+  if (part.hardwareKind === 'dowel') {
+    return `Wood Dowel ${formatMetricSmallValue(part.dimensions[0])} x ${formatMetricLengthValue(part.dimensions[2])} mm`;
+  }
+
+  return part.name;
+};
+
+const getPartDisplayName = (part: PartTemplate | PartData, unitSystem: 'default' | 'metric') =>
+  unitSystem === 'metric' ? getMetricPartDisplayName(part) : part.name;
+
+const getPartDimensionSummary = (part: PartTemplate | PartData, unitSystem: 'default' | 'metric') => {
+  if (unitSystem === 'metric') {
+    return `${formatMetricSmallValue(part.dimensions[0])} x ${formatMetricSmallValue(part.dimensions[1])} x ${formatMetricLengthValue(part.dimensions[2])} mm`;
+  }
+  return `${formatLengthInputValue(part.dimensions[0], unitSystem, 2)} x ${formatLengthInputValue(part.dimensions[1], unitSystem, 2)} x ${formatLengthInputValue(part.dimensions[2], unitSystem, 2)} ${getLengthUnitLabel(unitSystem)}`;
+};
+
+const getLumberOptionLabel = (template: PartTemplate, unitSystem: 'default' | 'metric') => {
+  if (unitSystem === 'metric') {
+    return `${formatMetricLengthValue(template.dimensions[0])} x ${formatMetricLengthValue(template.dimensions[1])} x ${formatMetricLengthValue(template.dimensions[2])} mm`;
+  }
   const nominal = template.name.match(/\b\d+x\d+\b/i)?.[0];
   const section = nominal ?? `${template.dimensions[0]}" x ${template.dimensions[1]}"`;
   const lengthLabel = Math.abs(template.dimensions[2] / 12 - Math.round(template.dimensions[2] / 12)) < 0.001
@@ -142,14 +202,18 @@ const getLumberOptionLabel = (template: PartTemplate) => {
   return `${section} x ${lengthLabel}`;
 };
 
-const getPlywoodOptionLabel = (template: PartTemplate) => {
+const getPlywoodOptionLabel = (template: PartTemplate, unitSystem: 'default' | 'metric') => {
+  if (unitSystem === 'metric') {
+    return `${formatMetricLengthValue(template.dimensions[1])} mm - ${formatMetricLengthValue(template.dimensions[0])} x ${formatMetricLengthValue(template.dimensions[2])} mm`;
+  }
   const thicknessLabel = formatFractionalInches(template.dimensions[1]);
   const widthFeet = formatFeetFromInches(template.dimensions[0]);
   const lengthFeet = formatFeetFromInches(template.dimensions[2]);
   return `${thicknessLabel} - ${widthFeet}x${lengthFeet}`;
 };
 
-const getScrewOptionLabel = (template: PartTemplate) => template.name;
+const getScrewOptionLabel = (template: PartTemplate, unitSystem: 'default' | 'metric') =>
+  unitSystem === 'metric' ? getMetricPartDisplayName(template) : template.name;
 
 const getLibraryThumbnailSrc = (group: LibraryPartGroup) => {
   if (group.kind === 'lumber') return LUMBER_ICON_SRC;
@@ -238,7 +302,6 @@ const clampLCutValue = (value: number, maxValue: number) => {
 
 const clampMiterAngle = (value: number) => Math.max(-80, Math.min(80, value));
 const MIN_DIMENSION_VALUE = 0.01;
-const formatEditableNumber = (value: number) => value.toFixed(3).replace(/\.?0+$/, '');
 const formatEditableFixed = (value: number, digits: number) => {
   const fixed = value.toFixed(digits);
   if (digits === 0) return fixed;
@@ -799,6 +862,7 @@ export const Sidebar: React.FC = () => {
     attachPartToHinge,
     detachPartFromHinge,
     setHingeAngle,
+    unitSystem,
   } = useStore();
   const selectedPart = parts.find((p) => p.id === selectedId);
   const hingeParts = parts.filter((part) => part.hardwareKind === 'hinge');
@@ -820,6 +884,10 @@ export const Sidebar: React.FC = () => {
   const [activeRotationField, setActiveRotationField] = useState<number | null>(null);
   const [angledDrafts, setAngledDrafts] = useState<{ startAngle: string; endAngle: string }>({ startAngle: '', endAngle: '' });
   const [activeAngledField, setActiveAngledField] = useState<'startAngle' | 'endAngle' | null>(null);
+  const lengthUnitLabel = getLengthUnitLabel(unitSystem, 'long');
+  const lengthUnitShortLabel = getLengthUnitLabel(unitSystem);
+  const formatLengthDraft = (value: number) => formatLengthInputValue(value, unitSystem, 3);
+  const parseDisplayLength = (value: string) => parseLengthInput(value, unitSystem);
 
   useEffect(() => {
     if (selectedId) {
@@ -835,6 +903,10 @@ export const Sidebar: React.FC = () => {
   }, [selectedId]);
 
   useEffect(() => {
+    setLibraryDimensionDrafts({});
+  }, [unitSystem]);
+
+  useEffect(() => {
     if (!selectedPart) {
       setDimensionDrafts(['', '', '']);
       setActiveDimensionField(null);
@@ -848,12 +920,13 @@ export const Sidebar: React.FC = () => {
     }
     if (activeDimensionField !== null) return;
     setDimensionDrafts([
-      formatEditableNumber(selectedPart.dimensions[0]),
-      formatEditableNumber(selectedPart.dimensions[1]),
-      formatEditableNumber(selectedPart.dimensions[2]),
+      formatLengthDraft(selectedPart.dimensions[0]),
+      formatLengthDraft(selectedPart.dimensions[1]),
+      formatLengthDraft(selectedPart.dimensions[2]),
     ]);
   }, [
     activeDimensionField,
+    unitSystem,
     selectedPart?.id,
     selectedPart?.dimensions[0],
     selectedPart?.dimensions[1],
@@ -864,12 +937,13 @@ export const Sidebar: React.FC = () => {
     if (!selectedPart) return;
     if (activePositionField !== null) return;
     setPositionDrafts([
-      formatEditableFixed(selectedPart.position[0], 2),
-      formatEditableFixed(selectedPart.position[1], 2),
-      formatEditableFixed(selectedPart.position[2], 2),
+      formatLengthDraft(selectedPart.position[0]),
+      formatLengthDraft(selectedPart.position[1]),
+      formatLengthDraft(selectedPart.position[2]),
     ]);
   }, [
     activePositionField,
+    unitSystem,
     selectedPart?.id,
     selectedPart?.position[0],
     selectedPart?.position[1],
@@ -1002,27 +1076,27 @@ export const Sidebar: React.FC = () => {
     fallbackDimensions: [number, number, number]
   ) => {
     const currentDimensions = libraryDimensions[groupId] ?? fallbackDimensions;
-    const currentDrafts = libraryDimensionDrafts[groupId] ?? currentDimensions.map(formatEditableNumber) as [string, string, string];
+    const currentDrafts = libraryDimensionDrafts[groupId] ?? currentDimensions.map(formatLengthDraft) as [string, string, string];
     const raw = currentDrafts[index]?.trim() ?? '';
-    const parsed = Number.parseFloat(raw);
-    const nextValue = raw === '' || Number.isNaN(parsed) || parsed <= 0 ? MIN_DIMENSION_VALUE : parsed;
+    const parsed = parseDisplayLength(raw);
+    const nextValue = raw === '' || parsed === null || parsed <= 0 ? MIN_DIMENSION_VALUE : parsed;
     const nextDimensions = [...currentDimensions] as [number, number, number];
     nextDimensions[index] = nextValue;
     setLibraryDimensions((prev) => ({ ...prev, [groupId]: nextDimensions }));
     setLibraryDimensionDrafts((prev) => ({
       ...prev,
       [groupId]: [
-        index === 0 ? formatEditableNumber(nextDimensions[0]) : (prev[groupId]?.[0] ?? currentDrafts[0]),
-        index === 1 ? formatEditableNumber(nextDimensions[1]) : (prev[groupId]?.[1] ?? currentDrafts[1]),
-        index === 2 ? formatEditableNumber(nextDimensions[2]) : (prev[groupId]?.[2] ?? currentDrafts[2]),
+        index === 0 ? formatLengthDraft(nextDimensions[0]) : (prev[groupId]?.[0] ?? currentDrafts[0]),
+        index === 1 ? formatLengthDraft(nextDimensions[1]) : (prev[groupId]?.[1] ?? currentDrafts[1]),
+        index === 2 ? formatLengthDraft(nextDimensions[2]) : (prev[groupId]?.[2] ?? currentDrafts[2]),
       ],
     }));
   };
 
   const updateDimension = (index: number, value: string) => {
     if (!selectedPart) return;
-    const val = parseFloat(value);
-    if (Number.isNaN(val) || val <= 0) return;
+    const val = parseDisplayLength(value);
+    if (val === null || val <= 0) return;
 
     const newDimensions = [...selectedPart.dimensions] as [number, number, number];
     newDimensions[index] = Math.max(MIN_DIMENSION_VALUE, val);
@@ -1060,8 +1134,8 @@ export const Sidebar: React.FC = () => {
 
   const updatePosition = (index: number, value: string) => {
     if (!selectedPart) return;
-    const val = parseFloat(value);
-    if (Number.isNaN(val)) return;
+    const val = parseDisplayLength(value);
+    if (val === null) return;
 
     const newPosition = [...selectedPart.position] as [number, number, number];
     newPosition[index] = val;
@@ -1174,8 +1248,8 @@ export const Sidebar: React.FC = () => {
 
   const updateLCutMeasure = (field: 'cutWidth' | 'cutDepth', value: string) => {
     if (!selectedPart || selectedPart.type === 'hardware') return;
-    const numericValue = parseFloat(value);
-    if (Number.isNaN(numericValue)) return;
+    const numericValue = parseDisplayLength(value);
+    if (numericValue === null) return;
 
     const max = field === 'cutWidth' ? selectedPart.dimensions[0] : selectedPart.dimensions[2];
     const clamped = clampLCutValue(numericValue, max);
@@ -1319,9 +1393,14 @@ export const Sidebar: React.FC = () => {
     });
   };
 
-  const filteredParts = parts.filter((p) =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredParts = parts.filter((p) => {
+    const normalizedQuery = searchTerm.toLowerCase();
+    if (!normalizedQuery) return true;
+    return (
+      p.name.toLowerCase().includes(normalizedQuery)
+      || getPartDisplayName(p, unitSystem).toLowerCase().includes(normalizedQuery)
+    );
+  });
 
   const visibleLibraryParts = COMMON_PARTS.filter((part) => {
     if (libraryCategory === 'staining') return false;
@@ -1363,7 +1442,9 @@ export const Sidebar: React.FC = () => {
       groups.push({
         id: 'group-plywood',
         title: 'Plywood',
-        description: 'Quick-pick sheet sizes: 2x4, 4x4, 4x8.',
+        description: unitSystem === 'metric'
+          ? 'Quick-pick sheet sizes: 610 x 1220, 1220 x 1220, 1220 x 2440 mm.'
+          : 'Quick-pick sheet sizes: 2x4, 4x4, 4x8.',
         kind: 'plywood',
         options,
       });
@@ -1391,7 +1472,7 @@ export const Sidebar: React.FC = () => {
       .forEach((part) => {
         groups.push({
           id: `single-${getTemplateKey(part)}`,
-          title: part.name,
+          title: getPartDisplayName(part, unitSystem),
           description: '',
           kind: 'single',
           options: [part],
@@ -1569,9 +1650,9 @@ export const Sidebar: React.FC = () => {
                               />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium text-slate-700">{part.name}</div>
+                              <div className="truncate font-medium text-slate-700">{getPartDisplayName(part, unitSystem)}</div>
                               <div className="mt-1 text-xs text-slate-500">
-                                {part.dimensions[0]}" x {part.dimensions[1]}" x {part.dimensions[2]}"
+                                {getPartDimensionSummary(part, unitSystem)}
                               </div>
                             </div>
                             <div className="shrink-0 self-center opacity-0 text-blue-500 transition-opacity group-hover:opacity-100">
@@ -1586,16 +1667,16 @@ export const Sidebar: React.FC = () => {
                     const selectedTemplateKey = librarySelections[group.id] ?? getTemplateKey(group.options[0]);
                     const selectedTemplate = group.options.find((part) => getTemplateKey(part) === selectedTemplateKey) ?? group.options[0];
                     const labelForOption = group.kind === 'lumber'
-                      ? getLumberOptionLabel
+                      ? (part: PartTemplate) => getLumberOptionLabel(part, unitSystem)
                       : group.kind === 'plywood'
-                        ? getPlywoodOptionLabel
-                        : getScrewOptionLabel;
+                        ? (part: PartTemplate) => getPlywoodOptionLabel(part, unitSystem)
+                        : (part: PartTemplate) => getScrewOptionLabel(part, unitSystem);
                     const selectedQuantity = libraryQuantities[group.id] ?? 1;
                     const isAddPanelOpen = activeAddGroupId === group.id;
                     const quantityLabel = selectedQuantity > 1 ? `${selectedQuantity} pcs` : '1 pc';
                     const selectedDimensions = libraryDimensions[group.id] ?? [...selectedTemplate.dimensions] as [number, number, number];
                     const selectedDimensionDrafts = libraryDimensionDrafts[group.id]
-                      ?? selectedDimensions.map(formatEditableNumber) as [string, string, string];
+                      ?? selectedDimensions.map(formatLengthDraft) as [string, string, string];
 
                     return (
                       <div
@@ -1657,7 +1738,7 @@ export const Sidebar: React.FC = () => {
                                   }));
                                   setLibraryDimensionDrafts((prev) => ({
                                     ...prev,
-                                    [group.id]: nextTemplate.dimensions.map(formatEditableNumber) as [string, string, string],
+                                    [group.id]: nextTemplate.dimensions.map(formatLengthDraft) as [string, string, string],
                                   }));
                                 }}
                                 className="mt-0.5 w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
@@ -1686,12 +1767,12 @@ export const Sidebar: React.FC = () => {
                               />
                             </div>
                             <div>
-                              <label className="text-[10px] text-slate-500">Dimensions (inches)</label>
+                              <label className="text-[10px] text-slate-500">Dimensions ({lengthUnitLabel})</label>
                               <div className="mt-0.5 grid grid-cols-3 gap-1.5">
                                 <input
                                   type="number"
-                                  min={0.01}
-                                  step={0.01}
+                                  min={formatLengthStep(MIN_DIMENSION_VALUE, unitSystem)}
+                                  step={formatLengthStep(0.01, unitSystem)}
                                   value={selectedDimensionDrafts[0]}
                                   onChange={(e) => {
                                     const raw = e.target.value;
@@ -1700,8 +1781,8 @@ export const Sidebar: React.FC = () => {
                                       [group.id]: [raw, selectedDimensionDrafts[1], selectedDimensionDrafts[2]],
                                     }));
                                     if (raw.trim() === '') return;
-                                    const numeric = Number.parseFloat(raw);
-                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    const numeric = parseDisplayLength(raw);
+                                    if (numeric === null || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [numeric, selectedDimensions[1], selectedDimensions[2]],
@@ -1714,8 +1795,8 @@ export const Sidebar: React.FC = () => {
                                 />
                                 <input
                                   type="number"
-                                  min={0.01}
-                                  step={0.01}
+                                  min={formatLengthStep(MIN_DIMENSION_VALUE, unitSystem)}
+                                  step={formatLengthStep(0.01, unitSystem)}
                                   value={selectedDimensionDrafts[1]}
                                   onChange={(e) => {
                                     const raw = e.target.value;
@@ -1724,8 +1805,8 @@ export const Sidebar: React.FC = () => {
                                       [group.id]: [selectedDimensionDrafts[0], raw, selectedDimensionDrafts[2]],
                                     }));
                                     if (raw.trim() === '') return;
-                                    const numeric = Number.parseFloat(raw);
-                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    const numeric = parseDisplayLength(raw);
+                                    if (numeric === null || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [selectedDimensions[0], numeric, selectedDimensions[2]],
@@ -1738,8 +1819,8 @@ export const Sidebar: React.FC = () => {
                                 />
                                 <input
                                   type="number"
-                                  min={0.01}
-                                  step={0.01}
+                                  min={formatLengthStep(MIN_DIMENSION_VALUE, unitSystem)}
+                                  step={formatLengthStep(0.01, unitSystem)}
                                   value={selectedDimensionDrafts[2]}
                                   onChange={(e) => {
                                     const raw = e.target.value;
@@ -1748,8 +1829,8 @@ export const Sidebar: React.FC = () => {
                                       [group.id]: [selectedDimensionDrafts[0], selectedDimensionDrafts[1], raw],
                                     }));
                                     if (raw.trim() === '') return;
-                                    const numeric = Number.parseFloat(raw);
-                                    if (Number.isNaN(numeric) || numeric <= 0) return;
+                                    const numeric = parseDisplayLength(raw);
+                                    if (numeric === null || numeric <= 0) return;
                                     setLibraryDimensions((prev) => ({
                                       ...prev,
                                       [group.id]: [selectedDimensions[0], selectedDimensions[1], numeric],
@@ -1764,7 +1845,7 @@ export const Sidebar: React.FC = () => {
                               <div className="mt-1 text-[10px] text-slate-400">W x H x L</div>
                             </div>
                             <div className="text-[11px] text-slate-500">
-                              {selectedDimensions[0]}" x {selectedDimensions[1]}" x {selectedDimensions[2]}"
+                              {formatLengthInputValue(selectedDimensions[0], unitSystem, 2)} x {formatLengthInputValue(selectedDimensions[1], unitSystem, 2)} x {formatLengthInputValue(selectedDimensions[2], unitSystem, 2)} {lengthUnitShortLabel}
                             </div>
                             <button
                               onClick={() => {
@@ -1833,9 +1914,9 @@ export const Sidebar: React.FC = () => {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{part.name}</div>
+                      <div className="font-medium truncate">{getPartDisplayName(part, unitSystem)}</div>
                       <div className="text-[10px] text-slate-500 truncate">
-                        {part.position.map((n) => Math.round(n)).join(', ')}
+                        {part.position.map((value) => formatLengthInputValue(value, unitSystem, 1)).join(', ')} {lengthUnitShortLabel}
                       </div>
                     </div>
                     {part.id === selectedId && <MousePointer2 size={14} className="opacity-50" />}
@@ -1858,7 +1939,7 @@ export const Sidebar: React.FC = () => {
             <div>
               <label className="text-xs font-semibold text-slate-500 flex items-center gap-1 mb-1">
                 <Ruler size={14} />
-                Dimensions (inches)
+                Dimensions ({lengthUnitLabel})
               </label>
               <div className="grid grid-cols-3 gap-2">
                 <div>
@@ -1866,7 +1947,7 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     inputMode="decimal"
-                    step="0.1"
+                    step={formatLengthStep(0.1, unitSystem)}
                     value={dimensionDrafts[0]}
                     onFocus={() => setActiveDimensionField(0)}
                     onChange={(e) => {
@@ -1877,7 +1958,7 @@ export const Sidebar: React.FC = () => {
                     onBlur={() => {
                       setActiveDimensionField(null);
                       setDimensionDrafts((prev) => [
-                        formatEditableNumber(selectedPart.dimensions[0]),
+                        formatLengthDraft(selectedPart.dimensions[0]),
                         prev[1],
                         prev[2],
                       ]);
@@ -1890,7 +1971,7 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     inputMode="decimal"
-                    step="0.1"
+                    step={formatLengthStep(0.1, unitSystem)}
                     value={dimensionDrafts[1]}
                     onFocus={() => setActiveDimensionField(1)}
                     onChange={(e) => {
@@ -1902,7 +1983,7 @@ export const Sidebar: React.FC = () => {
                       setActiveDimensionField(null);
                       setDimensionDrafts((prev) => [
                         prev[0],
-                        formatEditableNumber(selectedPart.dimensions[1]),
+                        formatLengthDraft(selectedPart.dimensions[1]),
                         prev[2],
                       ]);
                     }}
@@ -1914,7 +1995,7 @@ export const Sidebar: React.FC = () => {
                   <input
                     type="number"
                     inputMode="decimal"
-                    step="0.1"
+                    step={formatLengthStep(0.1, unitSystem)}
                     value={dimensionDrafts[2]}
                     onFocus={() => setActiveDimensionField(2)}
                     onChange={(e) => {
@@ -1927,7 +2008,7 @@ export const Sidebar: React.FC = () => {
                       setDimensionDrafts((prev) => [
                         prev[0],
                         prev[1],
-                        formatEditableNumber(selectedPart.dimensions[2]),
+                        formatLengthDraft(selectedPart.dimensions[2]),
                       ]);
                     }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"
@@ -1964,8 +2045,8 @@ export const Sidebar: React.FC = () => {
                         <span className="text-[10px] text-slate-500">Cut Width</span>
                         <input
                           type="number"
-                          step="0.125"
-                          value={(currentProfile.cutWidth ?? selectedPart.dimensions[0] / 2).toFixed(3)}
+                          step={formatLengthStep(0.125, unitSystem)}
+                          value={formatLengthDraft(currentProfile.cutWidth ?? selectedPart.dimensions[0] / 2)}
                           onChange={(e) => updateLCutMeasure('cutWidth', e.target.value)}
                           className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                         />
@@ -1974,8 +2055,8 @@ export const Sidebar: React.FC = () => {
                         <span className="text-[10px] text-slate-500">Cut Depth</span>
                         <input
                           type="number"
-                          step="0.125"
-                          value={(currentProfile.cutDepth ?? selectedPart.dimensions[2] / 2).toFixed(3)}
+                          step={formatLengthStep(0.125, unitSystem)}
+                          value={formatLengthDraft(currentProfile.cutDepth ?? selectedPart.dimensions[2] / 2)}
                           onChange={(e) => updateLCutMeasure('cutDepth', e.target.value)}
                           className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none bg-white"
                         />
@@ -2208,14 +2289,14 @@ export const Sidebar: React.FC = () => {
             <div>
               <label className="text-xs font-semibold text-slate-500 flex items-center gap-1 mb-1">
                 <Move3d size={14} />
-                Position (inches)
+                Position ({lengthUnitLabel})
               </label>
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <span className="text-[10px] text-slate-400">X</span>
                   <input
                     type="number"
-                    step="0.5"
+                    step={formatLengthStep(0.5, unitSystem)}
                     value={positionDrafts[0]}
                     onFocus={() => setActivePositionField(0)}
                     onChange={(e) => {
@@ -2226,7 +2307,7 @@ export const Sidebar: React.FC = () => {
                     onBlur={() => {
                       setActivePositionField(null);
                       setPositionDrafts((prev) => [
-                        formatEditableFixed(selectedPart.position[0], 2),
+                        formatLengthDraft(selectedPart.position[0]),
                         prev[1],
                         prev[2],
                       ]);
@@ -2238,7 +2319,7 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-slate-400">Y</span>
                   <input
                     type="number"
-                    step="0.5"
+                    step={formatLengthStep(0.5, unitSystem)}
                     value={positionDrafts[1]}
                     onFocus={() => setActivePositionField(1)}
                     onChange={(e) => {
@@ -2250,7 +2331,7 @@ export const Sidebar: React.FC = () => {
                       setActivePositionField(null);
                       setPositionDrafts((prev) => [
                         prev[0],
-                        formatEditableFixed(selectedPart.position[1], 2),
+                        formatLengthDraft(selectedPart.position[1]),
                         prev[2],
                       ]);
                     }}
@@ -2261,7 +2342,7 @@ export const Sidebar: React.FC = () => {
                   <span className="text-[10px] text-slate-400">Z</span>
                   <input
                     type="number"
-                    step="0.5"
+                    step={formatLengthStep(0.5, unitSystem)}
                     value={positionDrafts[2]}
                     onFocus={() => setActivePositionField(2)}
                     onChange={(e) => {
@@ -2274,7 +2355,7 @@ export const Sidebar: React.FC = () => {
                       setPositionDrafts((prev) => [
                         prev[0],
                         prev[1],
-                        formatEditableFixed(selectedPart.position[2], 2),
+                        formatLengthDraft(selectedPart.position[2]),
                       ]);
                     }}
                     className="w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-blue-500 outline-none"

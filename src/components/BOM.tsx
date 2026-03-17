@@ -4,6 +4,7 @@ import { PartData } from '../types';
 import { ClipboardList, ExternalLink, FileDown, ShoppingCart, ChevronDown } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatDimensionTriple, formatLengthWithUnit, type MeasurementUnitSystem } from '../utils/units';
 
 const roundTo = (value: number) => value.toFixed(3);
 const CUT_PLAN_EPS = 0.0001;
@@ -22,7 +23,7 @@ type CutRecipe = {
 
 type Point2 = [number, number];
 
-const formatInches = (value: number) => {
+const formatNumber = (value: number) => {
   const rounded = Math.round(value * 100) / 100;
   const text = rounded.toFixed(2);
   return text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -216,14 +217,14 @@ const polygonNotches = (part: PartData): NotchRect[] => {
   return notches.sort((a, b) => ((b.x1 - b.x0) * (b.z1 - b.z0)) - ((a.x1 - a.x0) * (a.z1 - a.z0)));
 };
 
-const notchToInstruction = (notch: NotchRect, part: PartData) => {
+const notchToInstruction = (notch: NotchRect, part: PartData, unitSystem: MeasurementUnitSystem) => {
   const minX = -part.dimensions[0] / 2;
   const minZ = -part.dimensions[2] / 2;
   const width = notch.x1 - notch.x0;
   const depth = notch.z1 - notch.z0;
   const fromLeft = notch.x0 - minX;
   const fromBack = notch.z0 - minZ;
-  return `Remove ${formatInches(width)}" x ${formatInches(depth)}" at left ${formatInches(fromLeft)}", back ${formatInches(fromBack)}"`;
+  return `Remove ${formatLengthWithUnit(width, unitSystem)} x ${formatLengthWithUnit(depth, unitSystem)} at left ${formatLengthWithUnit(fromLeft, unitSystem)}, back ${formatLengthWithUnit(fromBack, unitSystem)}`;
 };
 
 const homeDepotSearchUrl = (query: string) => `https://www.homedepot.com/s/${encodeURIComponent(query)}`;
@@ -347,7 +348,7 @@ const cutShapeSvg = (part: PartData) => {
   `;
 };
 
-const cutRecipe = (part: PartData): CutRecipe | null => {
+const cutRecipe = (part: PartData, unitSystem: MeasurementUnitSystem): CutRecipe | null => {
   if (part.type === 'hardware' || !part.profile || part.profile.type === 'rect') {
     return null;
   }
@@ -357,7 +358,7 @@ const cutRecipe = (part: PartData): CutRecipe | null => {
     if (!notch) return null;
     return {
       summary: '2 straight cuts (1 corner notch)',
-      steps: [notchToInstruction(notch, part)],
+      steps: [notchToInstruction(notch, part, unitSystem)],
     };
   }
 
@@ -370,7 +371,7 @@ const cutRecipe = (part: PartData): CutRecipe | null => {
       };
     }
 
-    const steps = notches.map((notch) => notchToInstruction(notch, part));
+    const steps = notches.map((notch) => notchToInstruction(notch, part, unitSystem));
     return {
       summary: `${notches.length * 2} straight cuts (${notches.length} notch${notches.length > 1 ? 'es' : ''})`,
       steps,
@@ -383,8 +384,8 @@ const cutRecipe = (part: PartData): CutRecipe | null => {
     return {
       summary: '2 angled end cuts',
       steps: [
-        `Start end: set saw to ${formatInches(Math.abs(startAngle))} deg (${startAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
-        `End end: set saw to ${formatInches(Math.abs(endAngle))} deg (${endAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
+        `Start end: set saw to ${formatNumber(Math.abs(startAngle))} deg (${startAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
+        `End end: set saw to ${formatNumber(Math.abs(endAngle))} deg (${endAngle >= 0 ? 'positive tilt' : 'negative tilt'})`,
       ],
     };
   }
@@ -433,7 +434,7 @@ const cutKey = (part: PartData) => {
   ].join('|');
 };
 
-const formatProfile = (part: PartData) => {
+const formatProfile = (part: PartData, unitSystem: MeasurementUnitSystem) => {
   if (!part.profile || part.profile.type === 'rect' || part.type === 'hardware') {
     return null;
   }
@@ -443,11 +444,11 @@ const formatProfile = (part: PartData) => {
   }
 
   if (part.profile.type === 'angled') {
-    return `Angled ends: start ${formatInches(part.profile.startAngle ?? 0)} deg, end ${formatInches(part.profile.endAngle ?? 0)} deg`;
+    return `Angled ends: start ${formatNumber(part.profile.startAngle ?? 0)} deg, end ${formatNumber(part.profile.endAngle ?? 0)} deg`;
   }
 
   const corner = (part.profile.corner ?? 'front-left').replace('-', ' ');
-  return `L-cut: ${part.profile.cutWidth?.toFixed(1) ?? (part.dimensions[0] / 2).toFixed(1)}" x ${part.profile.cutDepth?.toFixed(1) ?? (part.dimensions[2] / 2).toFixed(1)}" (${corner})`;
+  return `L-cut: ${formatLengthWithUnit(part.profile.cutWidth ?? part.dimensions[0] / 2, unitSystem, 1)} x ${formatLengthWithUnit(part.profile.cutDepth ?? part.dimensions[2] / 2, unitSystem, 1)} (${corner})`;
 };
 
 const calculateShoppingList = (parts: PartData[]) => {
@@ -594,7 +595,8 @@ const svgMarkupToPngDataUrl = (svgMarkup: string, size = 148) =>
 
 const buildCutReportPdf = async (
   parts: PartData[],
-  cutList: Array<{ key: string; part: PartData; count: number }>
+  cutList: Array<{ key: string; part: PartData; count: number }>,
+  unitSystem: MeasurementUnitSystem
 ) => {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -638,8 +640,8 @@ const buildCutReportPdf = async (
 
   for (let index = 0; index < cutList.length; index += 1) {
     const { part, count } = cutList[index];
-    const profileLabel = formatProfile(part) ?? 'Rectangular profile';
-    const recipe = cutRecipe(part);
+    const profileLabel = formatProfile(part, unitSystem) ?? 'Rectangular profile';
+    const recipe = cutRecipe(part, unitSystem);
     const steps = recipe?.steps ?? ['No custom cuts required beyond final dimensions.'];
     const recipeSummary = recipe?.summary ?? 'Standard rectangular cutting';
     const textX = margin + cardPadding + shapeSize + 12;
@@ -651,7 +653,7 @@ const buildCutReportPdf = async (
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     const dimensionLines = doc.splitTextToSize(
-      `Dimensions: ${part.dimensions[0].toFixed(1)}" x ${part.dimensions[1].toFixed(1)}" x ${part.dimensions[2].toFixed(1)}" | Type: ${part.type}`,
+      `Dimensions: ${formatDimensionTriple(part.dimensions, unitSystem, 1)} | Type: ${part.type}`,
       textWidth
     );
     const profileLines = doc.splitTextToSize(`Profile: ${profileLabel}`, textWidth);
@@ -723,7 +725,7 @@ const buildCutReportPdf = async (
 };
 
 export const BOM: React.FC = () => {
-  const { parts } = useStore();
+  const { parts, unitSystem } = useStore();
   const [tab, setTab] = useState<'cut' | 'shop'>('cut');
   const [openDownloadMenu, setOpenDownloadMenu] = useState<'cut' | 'shop' | null>(null);
   const cutDownloadMenuRef = useRef<HTMLDivElement>(null);
@@ -835,8 +837,8 @@ export const BOM: React.FC = () => {
 
   const buildCutReportHtml = () => {
     const cards = cutList.map(({ part, count }, index) => {
-      const profileLabel = formatProfile(part) ?? 'Rectangular profile';
-      const recipe = cutRecipe(part);
+      const profileLabel = formatProfile(part, unitSystem) ?? 'Rectangular profile';
+      const recipe = cutRecipe(part, unitSystem);
       const steps = recipe?.steps ?? ['No custom cuts required beyond final dimensions.'];
       const stepsHtml = steps
         .map((step, stepIndex) => `<li>${escapeHtml(`${stepIndex + 1}. ${step}`)}</li>`)
@@ -847,7 +849,7 @@ export const BOM: React.FC = () => {
           <div class="shape">${cutShapeSvg(part)}</div>
           <div class="content">
             <h2>${index + 1}. ${escapeHtml(part.name)} <span class="badge">x${count}</span></h2>
-            <p class="meta">Dimensions: ${escapeHtml(`${part.dimensions[0].toFixed(1)}" x ${part.dimensions[1].toFixed(1)}" x ${part.dimensions[2].toFixed(1)}"`)} | Type: ${escapeHtml(part.type)}</p>
+            <p class="meta">Dimensions: ${escapeHtml(formatDimensionTriple(part.dimensions, unitSystem, 1))} | Type: ${escapeHtml(part.type)}</p>
             <p class="profile">${escapeHtml(profileLabel)}</p>
             <p class="summary"><strong>Cut Plan:</strong> ${escapeHtml(recipe?.summary ?? 'Standard rectangular cutting')}</p>
             <ol class="steps">${stepsHtml}</ol>
@@ -907,7 +909,7 @@ export const BOM: React.FC = () => {
       triggerFileDownload('cut-report.html', html, 'text/html');
       return;
     }
-    void buildCutReportPdf(parts, cutList);
+    void buildCutReportPdf(parts, cutList, unitSystem);
   };
 
   return (
@@ -986,8 +988,8 @@ export const BOM: React.FC = () => {
                   <span>Dimensions (W x H x L)</span>
                 </div>
                 {cutList.map(({ key, part, count }, index) => {
-                  const profileLabel = formatProfile(part);
-                  const recipe = cutRecipe(part);
+                  const profileLabel = formatProfile(part, unitSystem);
+                  const recipe = cutRecipe(part, unitSystem);
                   return (
                   <div key={key} className="py-2 border-b border-slate-50 last:border-0">
                     <div className="flex justify-between items-start text-sm gap-2">
@@ -1000,7 +1002,7 @@ export const BOM: React.FC = () => {
                       </div>
                       <div className="text-slate-500 font-mono text-xs text-right min-w-0 max-w-[16rem]">
                         <div className="whitespace-nowrap">
-                          {part.dimensions[0].toFixed(1)}" x {part.dimensions[1].toFixed(1)}" x {part.dimensions[2].toFixed(1)}"
+                          {formatDimensionTriple(part.dimensions, unitSystem, 1)}
                         </div>
                         {profileLabel && (
                           <div className="mt-1 text-[11px] font-medium font-sans text-blue-700 whitespace-normal break-words">

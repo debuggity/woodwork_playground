@@ -1,23 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2, ArrowDown, MoveHorizontal, Zap } from 'lucide-react';
+import { MousePointer2, Move, RotateCw, Trash2, RotateCcw, Copy, Magnet, Download, Upload, Grid, ChevronDown, ChevronUp, LocateFixed, Wrench, Check, Hammer, X, Scissors, Undo2, Redo2, Sun, Cpu, Shield, ActivitySquare, Gauge, Layers, Maximize2, ArrowDown, MoveHorizontal, Zap, Ruler } from 'lucide-react';
 import { CutCorner, PartData } from '../types';
 import * as THREE from 'three';
 import polygonClipping from 'polygon-clipping';
 import { analyzeStructuralIntegrity, STRESS_SCENARIO_OPTIONS } from '../structuralAnalysis';
 import type { StressScenario } from '../structuralAnalysis';
+import { formatArea, formatLengthWithUnit, formatWeight } from '../utils/units';
 
 const sanitizeFilename = (value: string) => {
   const trimmed = value.trim();
   const safe = trimmed.replace(/[<>:"/\\|?*\x00-\x1F]/g, '-');
   const normalized = safe || 'wood-design';
   return normalized.endsWith('.json') ? normalized : `${normalized}.json`;
-};
-
-const formatInches = (value: number) => {
-  const rounded = Math.round(value * 100) / 100;
-  const text = rounded.toFixed(2);
-  return text.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 };
 
 type Point2 = [number, number];
@@ -1078,6 +1073,8 @@ export const Toolbar: React.FC = () => {
     requestCameraFocus,
     explodeFactor,
     setExplodeFactor,
+    unitSystem,
+    setUnitSystem,
     autoScrewParts,
     sawPartId,
     sawFace,
@@ -1740,11 +1737,11 @@ export const Toolbar: React.FC = () => {
                       </div>
                       <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
                         <div className="text-[10px] text-slate-400">Est. Weight</div>
-                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.estimatedWeightLb.toFixed(1)} lb</div>
+                        <div className="text-sm font-semibold text-cyan-100">{formatWeight(structuralReport.stats.estimatedWeightLb, unitSystem)}</div>
                       </div>
                       <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
                         <div className="text-[10px] text-slate-400">Footprint</div>
-                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.footprintSqFt.toFixed(2)} ft^2</div>
+                        <div className="text-sm font-semibold text-cyan-100">{formatArea(structuralReport.stats.footprintSqFt, unitSystem)}</div>
                       </div>
                       <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
                         <div className="inline-flex items-center gap-1 text-[10px] text-slate-400"><Layers size={10} />Groups</div>
@@ -1752,11 +1749,11 @@ export const Toolbar: React.FC = () => {
                       </div>
                       <div className="rounded border border-slate-700 bg-slate-900/80 px-2 py-1.5">
                         <div className="inline-flex items-center gap-1 text-[10px] text-slate-400"><Gauge size={10} />Max Span</div>
-                        <div className="text-sm font-semibold text-cyan-100">{structuralReport.stats.maxSpanIn.toFixed(1)} in</div>
+                        <div className="text-sm font-semibold text-cyan-100">{formatLengthWithUnit(structuralReport.stats.maxSpanIn, unitSystem, 1)}</div>
                       </div>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-cyan-100/80">
-                      <div>Worst Deflection: {structuralReport.stats.worstDeflectionIn.toFixed(2)} in</div>
+                      <div>Worst Deflection: {formatLengthWithUnit(structuralReport.stats.worstDeflectionIn, unitSystem, 2)}</div>
                       <div>Deflection Ratio: {structuralReport.stats.worstDeflectionRatio.toFixed(2)}x</div>
                       <div>Bending Ratio: {structuralReport.stats.worstBendingRatio.toFixed(2)}x</div>
                       <div>Column Ratio: {structuralReport.stats.worstAxialRatio.toFixed(2)}x</div>
@@ -1868,6 +1865,37 @@ export const Toolbar: React.FC = () => {
               <div className="px-2.5 pt-0.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                 Settings
               </div>
+              <div className="flex items-center justify-between px-2.5 py-2 text-sm text-slate-700">
+                <span className="flex items-center gap-2">
+                  <Ruler size={16} />
+                  Units
+                </span>
+                <div className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 shadow-sm">
+                  <button
+                    onClick={() => setUnitSystem('default')}
+                    className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                      unitSystem === 'default'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                    type="button"
+                  >
+                    Default
+                  </button>
+                  <button
+                    onClick={() => setUnitSystem('metric')}
+                    className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                      unitSystem === 'metric'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                    type="button"
+                  >
+                    Metric
+                  </button>
+                </div>
+              </div>
+
               <button
                 onClick={toggleFloor}
                 className="w-full flex items-center justify-between px-2.5 py-2 text-left text-sm rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
@@ -2010,7 +2038,7 @@ export const Toolbar: React.FC = () => {
               )}
               {sawCurrentSegment && (
                 <div className="mt-0.5 text-[11px] text-slate-700">
-                  Current cut: {formatInches(sawCurrentSegment.length)}" at {Math.round(sawCurrentSegment.angle)}°
+                  Current cut: {formatLengthWithUnit(sawCurrentSegment.length, unitSystem)} at {Math.round(sawCurrentSegment.angle)}°
                 </div>
               )}
             </div>

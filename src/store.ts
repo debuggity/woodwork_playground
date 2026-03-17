@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as THREE from 'three';
 import { CutCorner, PartData, SawFaceState, SawPlane, ToolType } from './types';
 import type { StressScenario } from './structuralAnalysis';
+import type { MeasurementUnitSystem } from './utils/units';
 
 const toQuaternion = (rotation: [number, number, number]) =>
   new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2], 'XYZ'));
@@ -14,6 +15,18 @@ const toEulerTuple = (quaternion: THREE.Quaternion): [number, number, number] =>
 
 const DEFAULT_HINGE_MIN_ANGLE = THREE.MathUtils.degToRad(-110);
 const DEFAULT_HINGE_MAX_ANGLE = THREE.MathUtils.degToRad(110);
+const MEASUREMENT_UNIT_STORAGE_KEY = 'woodworker_measurement_unit';
+
+const getInitialMeasurementUnit = (): MeasurementUnitSystem => {
+  if (typeof window === 'undefined') return 'default';
+  const stored = window.localStorage.getItem(MEASUREMENT_UNIT_STORAGE_KEY);
+  return stored === 'metric' ? 'metric' : 'default';
+};
+
+const persistMeasurementUnit = (unitSystem: MeasurementUnitSystem) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(MEASUREMENT_UNIT_STORAGE_KEY, unitSystem);
+};
 
 const getHingePinOffset = (hinge: PartData) => {
   const fallback = Math.max(hinge.dimensions[0] * 0.35, 0.2);
@@ -1369,6 +1382,7 @@ interface AppState {
   sawPreviewPoint: [number, number] | null;
   explodeFactor: number;
   cameraFocusRequest: number;
+  unitSystem: MeasurementUnitSystem;
   
   addPart: (part: PartData) => void;
   updatePart: (
@@ -1412,6 +1426,7 @@ interface AppState {
   setStressIntensity: (value: number) => void;
   requestCameraFocus: () => void;
   setExplodeFactor: (value: number) => void;
+  setUnitSystem: (unitSystem: MeasurementUnitSystem) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -1429,6 +1444,7 @@ export const useStore = create<AppState>((set) => ({
   sawPreviewPoint: null,
   explodeFactor: 0,
   cameraFocusRequest: 0,
+  unitSystem: getInitialMeasurementUnit(),
   snapEnabled: true, // Default to true for easier alignment
   edgeSnapEnabled: true,
   selectAssistEnabled: false,
@@ -2257,4 +2273,9 @@ export const useStore = create<AppState>((set) => ({
   requestCameraFocus: () => set((state) => ({ cameraFocusRequest: state.cameraFocusRequest + 1 })),
 
   setExplodeFactor: (value) => set({ explodeFactor: Math.max(0, Math.min(1, value)) }),
+
+  setUnitSystem: (unitSystem) => {
+    persistMeasurementUnit(unitSystem);
+    set({ unitSystem });
+  },
 }));
