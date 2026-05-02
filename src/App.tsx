@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react';
 
-type RouteId = 'home' | 'app' | 'blog' | 'about' | 'privacy' | 'terms' | 'contact';
+type RouteId = 'home' | 'app' | 'blog' | 'about' | 'privacy' | 'terms' | 'contact' | 'notFound';
 type CookieConsentChoice = 'accepted' | 'declined';
 type BlogPost = {
   slug: string;
@@ -47,9 +47,18 @@ type BlogPost = {
   body: string[];
 };
 type AppRoute = { page: RouteId; blogSlug?: string };
+type PageMeta = {
+  title: string;
+  description: string;
+  canonicalPath: string;
+  image: string;
+  type: 'website' | 'article';
+  robots: string;
+};
 type TutorialAction = 'add' | 'close-build-panel' | 'move' | 'resize' | 'close-edit-panel' | 'rotate' | 'center';
 type TutorialTool = 'select' | 'move' | 'rotate';
 
+const SITE_URL = 'https://beav.it';
 const BRAND_NAME = 'BEAV.IT';
 const BRAND_SHORT_NAME = 'BEAV.IT';
 const BRAND_TAGLINE = '3D Woodworking Planner';
@@ -73,6 +82,7 @@ const ROUTE_LABELS: Record<RouteId, string> = {
   privacy: 'Privacy Policy',
   terms: 'Terms',
   contact: 'Contact',
+  notFound: 'Not Found',
 };
 
 const ROUTE_ORDER: RouteId[] = ['home', 'app', 'blog', 'about', 'privacy', 'terms', 'contact'];
@@ -165,46 +175,113 @@ const BLOG_POST_BY_SLUG = BLOG_POSTS.reduce<Record<string, BlogPost>>((acc, post
 
 const routeToPath = (route: AppRoute) => {
   if (route.page === 'home') return '/';
-  if (route.page === 'blog' && route.blogSlug) return `/blog/${route.blogSlug}`;
-  return `/${route.page}`;
+  if (route.page === 'blog' && route.blogSlug) return `/blog/${route.blogSlug}/`;
+  if (route.page === 'notFound') return '/404';
+  return `/${route.page}/`;
 };
-
-const routeToHash = (route: AppRoute) => {
-  if (route.page === 'home') return '#/';
-  if (route.page === 'blog' && route.blogSlug) return `#/blog/${route.blogSlug}`;
-  return `#/${route.page}`;
-};
-
-const usesHashRouting = () => (
-  typeof window !== 'undefined'
-  && (import.meta.env.DEV || /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname))
-);
 
 const routeToRelativeUrl = (route: AppRoute) => {
   if (typeof window === 'undefined') return routeToPath(route);
-  if (usesHashRouting()) {
-    return `/${window.location.search}${routeToHash(route)}`;
-  }
   return `${routeToPath(route)}${window.location.search}`;
 };
 
 const routeToAbsoluteUrl = (route: AppRoute) => {
-  if (typeof window === 'undefined') return routeToPath(route);
+  if (typeof window === 'undefined') return `${SITE_URL}${routeToPath(route)}`;
   return `${window.location.origin}${routeToRelativeUrl(route)}`;
 };
 
-const getDocumentTitle = (route: AppRoute) => {
-  if (route.page === 'home') return `${BRAND_NAME} - ${BRAND_TAGLINE}`;
-  if (route.page === 'app') return `${BRAND_NAME} Build Studio`;
-  if (route.page === 'blog' && route.blogSlug && BLOG_POST_BY_SLUG[route.blogSlug]) {
-    return `${BLOG_POST_BY_SLUG[route.blogSlug].title} | ${BRAND_NAME}`;
+const DEFAULT_META_IMAGE = `${SITE_URL}/icons/logo-title.png`;
+
+const getRouteMeta = (route: AppRoute): PageMeta => {
+  const base: PageMeta = {
+    title: `${BRAND_NAME} - ${BRAND_TAGLINE}`,
+    description: 'Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, instant cut lists, and shopping lists.',
+    canonicalPath: routeToPath({ page: 'home' }),
+    image: DEFAULT_META_IMAGE,
+    type: 'website',
+    robots: 'index,follow',
+  };
+
+  if (route.page === 'app') {
+    return {
+      ...base,
+      title: `${BRAND_NAME} Build Studio`,
+      description: 'Open the free BEAV.IT 3D woodworking planner to lay out parts, test dimensions, use Auto Screw, and export build-ready cut lists.',
+      canonicalPath: routeToPath(route),
+    };
   }
-  if (route.page === 'blog') return `${BRAND_JOURNAL_NAME} | ${BRAND_NAME}`;
-  return `${ROUTE_LABELS[route.page]} | ${BRAND_NAME}`;
+
+  if (route.page === 'blog' && route.blogSlug && BLOG_POST_BY_SLUG[route.blogSlug]) {
+    const post = BLOG_POST_BY_SLUG[route.blogSlug];
+    return {
+      ...base,
+      title: `${post.title} | ${BRAND_NAME}`,
+      description: post.summary,
+      canonicalPath: routeToPath(route),
+      type: 'article',
+    };
+  }
+
+  if (route.page === 'blog') {
+    return {
+      ...base,
+      title: `${BRAND_JOURNAL_NAME} | ${BRAND_NAME}`,
+      description: 'Woodworking planning guides, BEAV.IT tutorials, build notes, screw placement tips, and practical 3D design workflows.',
+      canonicalPath: routeToPath({ page: 'blog' }),
+    };
+  }
+
+  if (route.page === 'about') {
+    return {
+      ...base,
+      title: `About | ${BRAND_NAME}`,
+      description: 'Learn why BEAV.IT exists: practical 3D woodworking planning for builders who want clearer layouts, fewer mistakes, and faster cut lists.',
+      canonicalPath: routeToPath(route),
+    };
+  }
+
+  if (route.page === 'privacy') {
+    return {
+      ...base,
+      title: `Privacy Policy | ${BRAND_NAME}`,
+      description: 'Read the BEAV.IT privacy policy for browser storage, cookies, advertising disclosures, and contact details.',
+      canonicalPath: routeToPath(route),
+    };
+  }
+
+  if (route.page === 'terms') {
+    return {
+      ...base,
+      title: `Terms | ${BRAND_NAME}`,
+      description: 'Read the BEAV.IT terms for using the woodworking planner and verifying real-world dimensions, safety, and build decisions.',
+      canonicalPath: routeToPath(route),
+    };
+  }
+
+  if (route.page === 'contact') {
+    return {
+      ...base,
+      title: `Contact | ${BRAND_NAME}`,
+      description: 'Contact BEAV.IT for woodworking planner questions, bug reports, partnership inquiries, and product feedback.',
+      canonicalPath: routeToPath(route),
+    };
+  }
+
+  if (route.page === 'notFound') {
+    return {
+      ...base,
+      title: `Page Not Found | ${BRAND_NAME}`,
+      description: 'This BEAV.IT page could not be found. Use the main navigation to find the woodworking planner, blog, privacy policy, or contact page.',
+      canonicalPath: routeToPath({ page: 'notFound' }),
+      robots: 'noindex,follow',
+    };
+  }
+
+  return base;
 };
 
 const toSimplePageRoute = (value: string): RouteId | null => {
-  if (value === '' || value === 'home') return 'home';
+  if (value === '' || value === 'home' || value === 'index.html') return 'home';
   if (value === 'app') return 'app';
   if (value === 'blog') return 'blog';
   if (value === 'about') return 'about';
@@ -215,9 +292,10 @@ const toSimplePageRoute = (value: string): RouteId | null => {
 };
 
 const normalizeRouteValue = (value: string): AppRoute | null => {
-  const cleaned = value.trim().toLowerCase().replace(/^#\/?/, '').replace(/^\/+/, '').replace(/\/+$/, '');
+  const cleaned = value.trim().toLowerCase().replace(/^#\/?/, '').replace(/^\/+/, '').replace(/\/+$/, '').replace(/\/index\.html$/, '');
   const pageRoute = toSimplePageRoute(cleaned);
   if (pageRoute) return { page: pageRoute };
+  if (cleaned === '404' || cleaned === '404.html' || cleaned === 'not-found') return { page: 'notFound' };
 
   if (cleaned.startsWith('blog/')) {
     const slug = cleaned.slice('blog/'.length).trim();
@@ -225,24 +303,19 @@ const normalizeRouteValue = (value: string): AppRoute | null => {
     if (BLOG_POST_BY_SLUG[slug]) {
       return { page: 'blog', blogSlug: slug };
     }
-    return { page: 'blog' };
+    return { page: 'notFound' };
   }
 
-  return null;
+  return { page: 'notFound' };
 };
 
 const getInitialRoute = (): AppRoute => {
   if (typeof window === 'undefined') return { page: 'home' };
-  const hashRoute = normalizeRouteValue(window.location.hash);
+  const hashRoute = window.location.hash ? normalizeRouteValue(window.location.hash) : null;
   const pathRoute = normalizeRouteValue(window.location.pathname);
-  if (usesHashRouting()) {
-    if (hashRoute) return hashRoute;
-    if (pathRoute) return pathRoute;
-  } else {
-    if (pathRoute) return pathRoute;
-    if (hashRoute) return hashRoute;
-  }
-  return { page: 'home' };
+  if (pathRoute) return pathRoute;
+  if (hashRoute) return hashRoute;
+  return { page: 'notFound' };
 };
 
 const SectionCard = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -250,6 +323,71 @@ const SectionCard = ({ title, children }: { title: string; children: React.React
     <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
     <div className="mt-4 space-y-3 text-slate-700 leading-relaxed">{children}</div>
   </section>
+);
+
+const upsertMeta = (selector: string, attrs: Record<string, string>) => {
+  const head = document.head;
+  let element = document.querySelector<HTMLMetaElement>(selector);
+
+  if (!element) {
+    element = document.createElement('meta');
+    head.appendChild(element);
+  }
+
+  Object.entries(attrs).forEach(([name, value]) => {
+    element?.setAttribute(name, value);
+  });
+};
+
+const upsertCanonical = (href: string) => {
+  let element = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+
+  if (!element) {
+    element = document.createElement('link');
+    element.setAttribute('rel', 'canonical');
+    document.head.appendChild(element);
+  }
+
+  element.setAttribute('href', href);
+};
+
+const shouldHandleClientNavigation = (event: React.MouseEvent<HTMLAnchorElement>) => (
+  !event.defaultPrevented
+  && event.button === 0
+  && !event.metaKey
+  && !event.altKey
+  && !event.ctrlKey
+  && !event.shiftKey
+);
+
+const RouteLink = ({
+  route,
+  navigate,
+  className,
+  children,
+  ariaLabel,
+  title,
+}: {
+  route: AppRoute;
+  navigate: (route: AppRoute) => void;
+  className?: string;
+  children: React.ReactNode;
+  ariaLabel?: string;
+  title?: string;
+}) => (
+  <a
+    href={routeToPath(route)}
+    aria-label={ariaLabel}
+    title={title}
+    onClick={(event) => {
+      if (!shouldHandleClientNavigation(event)) return;
+      event.preventDefault();
+      navigate(route);
+    }}
+    className={className}
+  >
+    {children}
+  </a>
 );
 
 const PingPongVideo = ({ src, className }: { src: string; className?: string }) => {
@@ -266,7 +404,7 @@ const PingPongVideo = ({ src, className }: { src: string; className?: string }) 
   );
 };
 
-const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug: string) => void }) => (
+const HomePage = ({ navigate }: { navigate: (route: AppRoute) => void }) => (
   <div className="space-y-6">
     <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50 p-7 shadow-sm sm:p-10">
       <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-amber-300/15 blur-3xl" />
@@ -288,12 +426,13 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
             Use smart 3D planning, Auto Screw, and instant cut and shopping lists to turn ideas into build-ready projects fast.
           </p>
           <div className="mt-6 flex justify-center">
-            <button
-              onClick={openApp}
+            <RouteLink
+              route={{ page: 'app' }}
+              navigate={navigate}
               className="rounded-xl bg-blue-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-blue-700"
             >
               Start Building Free
-            </button>
+            </RouteLink>
           </div>
           <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs">
             <span className="rounded-full border border-slate-300 bg-white/80 px-2.5 py-1 text-slate-600">Beginner-friendly</span>
@@ -302,10 +441,11 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
           </div>
         </div>
 
-        <button
-          onClick={openApp}
+        <RouteLink
+          route={{ page: 'app' }}
+          navigate={navigate}
           className="mx-auto block w-full max-w-[32rem] cursor-pointer text-left"
-          aria-label="Open live planner preview in build mode"
+          ariaLabel="Open live planner preview in build mode"
         >
           <div className="cursor-pointer overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white/90 p-3 shadow-[0_24px_70px_-36px_rgba(15,23,42,0.45)] backdrop-blur">
             <div className="rounded-[1.2rem] border border-slate-200 bg-slate-950 p-2 shadow-inner">
@@ -330,7 +470,7 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Import / export</span>
             </div>
           </div>
-        </button>
+        </RouteLink>
       </div>
     </section>
 
@@ -385,6 +525,44 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
     </div>
 
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Woodworking planning software</p>
+          <h2 className="mt-2 text-2xl font-semibold text-slate-900">Plan shelves, desk toppers, cabinets, benches, shop fixtures, and simple furniture before cutting material.</h2>
+          <div className="mt-4 space-y-3 text-sm leading-relaxed text-slate-700">
+            <p>
+              {BRAND_NAME} is built for practical woodworking plans where the exact board sizes, screw placement, assembly order, and material
+              list matter. Instead of drawing a flat sketch and hoping the joinery works, you can test part dimensions in 3D, move boards into
+              position, trim overlaps, and check the build from different camera angles.
+            </p>
+            <p>
+              The planner is especially useful for beginner woodworking projects, plywood fixtures, standing desk toppers, garage storage,
+              cabinet mockups, and quick furniture prototypes. Each design can become a cut list and shopping list, which helps reduce
+              off-by-one measurements, extra hardware trips, and wasted lumber.
+            </p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-base font-semibold text-slate-900">Popular workflows</h3>
+          <ul className="mt-3 space-y-2 text-sm text-slate-700">
+            <li>Lay out dimensional lumber and plywood parts in 3D.</li>
+            <li>Use Auto Screw to prototype fastener positions and counts.</li>
+            <li>Generate project cut lists and shopping lists from the model.</li>
+            <li>Export, import, and share woodworking plans between devices.</li>
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <RouteLink route={{ page: 'blog', blogSlug: 'why-planning-in-3d-saves-shop-time' }} navigate={navigate} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">
+              3D planning guide
+            </RouteLink>
+            <RouteLink route={{ page: 'blog', blogSlug: 'choosing-screw-size-quickly-in-cabinet-projects' }} navigate={navigate} className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">
+              Screw size guide
+            </RouteLink>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
       <div className="flex flex-col gap-2 text-center sm:text-left">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Start Here</p>
         <h2 className="text-2xl font-semibold text-slate-900">Quick blog links for getting started</h2>
@@ -393,8 +571,9 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
         </p>
       </div>
       <div className="mt-5 grid gap-4 md:grid-cols-3">
-        <button
-          onClick={() => openPost(INTERACTIVE_TUTORIAL_SLUG)}
+        <RouteLink
+          route={{ page: 'blog', blogSlug: INTERACTIVE_TUTORIAL_SLUG }}
+          navigate={navigate}
           className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-5 text-left shadow-sm hover:border-blue-300"
         >
           <span className="inline-flex rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-800">
@@ -404,9 +583,10 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
           <p className="mt-2 text-sm text-slate-700">
             Learn the basics in minutes with the interactive quickstart tutorial.
           </p>
-        </button>
-        <button
-          onClick={() => openPost(ADVANCED_FEATURES_SLUG)}
+        </RouteLink>
+        <RouteLink
+          route={{ page: 'blog', blogSlug: ADVANCED_FEATURES_SLUG }}
+          navigate={navigate}
           className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 text-left shadow-sm hover:border-indigo-300"
         >
           <span className="inline-flex rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-800">
@@ -416,9 +596,10 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
           <p className="mt-2 text-sm text-slate-700">
             See Auto Screw, overlap trimming, control panel tools, and more in one guide.
           </p>
-        </button>
-        <button
-          onClick={() => openPost(STANDING_DESK_TOPPER_SLUG)}
+        </RouteLink>
+        <RouteLink
+          route={{ page: 'blog', blogSlug: STANDING_DESK_TOPPER_SLUG }}
+          navigate={navigate}
           className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-lime-50 p-5 text-left shadow-sm hover:border-emerald-300"
         >
           <span className="inline-flex rounded-full border border-emerald-300 bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-800">
@@ -428,7 +609,7 @@ const HomePage = ({ openApp, openPost }: { openApp: () => void; openPost: (slug:
           <p className="mt-2 text-sm text-slate-700">
             Read the standing desk topper story that turned a real build problem into this app.
           </p>
-        </button>
+        </RouteLink>
       </div>
     </section>
   </div>
@@ -452,7 +633,7 @@ const BlogTitleGraphic = () => (
   </div>
 );
 
-const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
+const BlogPage = ({ navigate }: { navigate: (route: AppRoute) => void }) => {
   const quickstartPost = BLOG_POSTS.find((post) => post.slug === INTERACTIVE_TUTORIAL_SLUG);
   const regularPosts = BLOG_POSTS.filter((post) => post.slug !== INTERACTIVE_TUTORIAL_SLUG);
 
@@ -484,12 +665,13 @@ const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
             <p className="mt-2 max-w-3xl text-slate-700">
               Learn the app basics in a few minutes with a guided, hands-on walkthrough that mirrors the real UI.
             </p>
-            <button
-              onClick={() => openPost(quickstartPost.slug)}
+            <RouteLink
+              route={{ page: 'blog', blogSlug: quickstartPost.slug }}
+              navigate={navigate}
               className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               Start Quickstart Demo
-            </button>
+            </RouteLink>
           </div>
         </article>
       ) : null}
@@ -511,12 +693,13 @@ const BlogPage = ({ openPost }: { openPost: (slug: string) => void }) => {
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-500">{post.date}</p>
           <h3 className="mt-2 text-xl font-semibold text-slate-900">{post.title}</h3>
           <p className="mt-2 text-slate-700">{post.summary}</p>
-          <button
-            onClick={() => openPost(post.slug)}
+          <RouteLink
+            route={{ page: 'blog', blogSlug: post.slug }}
+            navigate={navigate}
             className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
           >
             {post.slug === ADVANCED_FEATURES_SLUG ? 'Read Advanced Guide' : 'Read Post'}
-          </button>
+          </RouteLink>
         </article>
       ))}
     </div>
@@ -2642,15 +2825,37 @@ const ContactPage = () => {
   );
 };
 
-const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: RouteId) => void; activePage: RouteId }) => (
+const NotFoundPage = ({ navigate }: { navigate: (route: AppRoute) => void }) => (
+  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">404</p>
+    <h1 className="mt-2 text-3xl font-semibold text-slate-900">Page not found</h1>
+    <p className="mt-3 max-w-2xl text-slate-700">
+      This URL does not match a public BEAV.IT page. Use one of the main pages below to keep browsing.
+    </p>
+    <div className="mt-5 flex flex-wrap gap-2">
+      <RouteLink route={{ page: 'home' }} navigate={navigate} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+        Home
+      </RouteLink>
+      <RouteLink route={{ page: 'blog' }} navigate={navigate} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Blog
+      </RouteLink>
+      <RouteLink route={{ page: 'contact' }} navigate={navigate} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        Contact
+      </RouteLink>
+    </div>
+  </section>
+);
+
+const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: AppRoute) => void; activePage: RouteId }) => (
   <div className="fixed left-1/2 -translate-x-1/2 bottom-3 z-50 max-w-[calc(100vw-1rem)] rounded-lg border border-slate-200 bg-white/95 backdrop-blur px-3 py-2 shadow-sm">
     <div className="flex items-center gap-2 text-xs text-slate-600">
       <div className="hidden sm:flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
         <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-5 w-5 object-contain" />
         <span className="font-semibold text-slate-700">{BRAND_SHORT_NAME}</span>
       </div>
-      <button
-        onClick={() => navigate('app')}
+      <RouteLink
+        route={{ page: 'app' }}
+        navigate={navigate}
         className={`rounded-md px-3 py-1.5 text-[12px] font-semibold shadow-sm transition-colors ${
           activePage === 'app'
             ? 'bg-blue-700 text-white ring-2 ring-blue-200'
@@ -2658,10 +2863,10 @@ const AppOverlayNav = ({ navigate, activePage }: { navigate: (route: RouteId) =>
         }`}
       >
         Build
-      </button>
-      <button onClick={() => navigate('home')} className="rounded px-2 py-1 hover:bg-slate-100">Home</button>
-      <button onClick={() => navigate('blog')} className="rounded px-2 py-1 hover:bg-slate-100">Blog</button>
-      <button onClick={() => navigate('contact')} className="rounded px-2 py-1 hover:bg-slate-100">Contact</button>
+      </RouteLink>
+      <RouteLink route={{ page: 'home' }} navigate={navigate} className="rounded px-2 py-1 hover:bg-slate-100">Home</RouteLink>
+      <RouteLink route={{ page: 'blog' }} navigate={navigate} className="rounded px-2 py-1 hover:bg-slate-100">Blog</RouteLink>
+      <RouteLink route={{ page: 'contact' }} navigate={navigate} className="rounded px-2 py-1 hover:bg-slate-100">Contact</RouteLink>
     </div>
   </div>
 );
@@ -2674,7 +2879,7 @@ const CookieConsentBanner = ({
 }: {
   consent: CookieConsentChoice | null;
   initialized: boolean;
-  navigate: (route: RouteId) => void;
+  navigate: (route: AppRoute) => void;
   onSave: (choice: CookieConsentChoice) => void;
 }) => {
   if (!initialized || consent) {
@@ -2693,9 +2898,9 @@ const CookieConsentBanner = ({
         <button onClick={() => onSave('declined')} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Decline
         </button>
-        <button onClick={() => navigate('privacy')} className="rounded-md px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50">
+        <RouteLink route={{ page: 'privacy' }} navigate={navigate} className="rounded-md px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50">
           Privacy Policy
-        </button>
+        </RouteLink>
       </div>
     </div>
   );
@@ -2739,26 +2944,17 @@ export function App() {
     setRoute(nextRoute);
   }, []);
 
+  const navigateRoute = useCallback((nextRoute: AppRoute) => updateBrowserRoute(nextRoute), [updateBrowserRoute]);
+  const navigate = useCallback((nextRoute: RouteId) => updateBrowserRoute({ page: nextRoute }), [updateBrowserRoute]);
+
   useEffect(() => {
-    if (usesHashRouting()) {
-      const onHashChange = () => {
-        const next = normalizeRouteValue(window.location.hash) ?? normalizeRouteValue(window.location.pathname);
-        setRoute(next ?? { page: 'home' });
-      };
-
-      onHashChange();
-      window.addEventListener('hashchange', onHashChange);
-      return () => {
-        window.removeEventListener('hashchange', onHashChange);
-      };
-    }
-
     const syncRouteFromLocation = () => {
-      const next = normalizeRouteValue(window.location.pathname) ?? normalizeRouteValue(window.location.hash);
-      setRoute(next ?? { page: 'home' });
+      const pathRoute = normalizeRouteValue(window.location.pathname);
+      const hashRoute = window.location.hash ? normalizeRouteValue(window.location.hash) : null;
+      setRoute(pathRoute ?? hashRoute ?? { page: 'notFound' });
     };
 
-    const legacyHashRoute = normalizeRouteValue(window.location.hash);
+    const legacyHashRoute = window.location.hash ? normalizeRouteValue(window.location.hash) : null;
     if (legacyHashRoute) {
       updateBrowserRoute(legacyHashRoute, 'replace');
     } else {
@@ -2773,15 +2969,6 @@ export function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (usesHashRouting()) {
-      const expectedUrl = `/${window.location.search}${routeToHash(route)}`;
-      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-      if (currentUrl !== expectedUrl) {
-        window.history.replaceState({}, '', expectedUrl);
-      }
-      return;
-    }
-
     const expectedUrl = routeToRelativeUrl(route);
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (currentUrl !== expectedUrl) {
@@ -2790,40 +2977,53 @@ export function App() {
   }, [route]);
 
   useEffect(() => {
-    document.title = getDocumentTitle(route);
+    const meta = getRouteMeta(route);
+    const canonicalUrl = `${SITE_URL}${meta.canonicalPath}`;
+
+    document.title = meta.title;
+    upsertCanonical(canonicalUrl);
+    upsertMeta('meta[name="description"]', { name: 'description', content: meta.description });
+    upsertMeta('meta[name="robots"]', { name: 'robots', content: meta.robots });
+    upsertMeta('meta[property="og:type"]', { property: 'og:type', content: meta.type });
+    upsertMeta('meta[property="og:title"]', { property: 'og:title', content: meta.title });
+    upsertMeta('meta[property="og:description"]', { property: 'og:description', content: meta.description });
+    upsertMeta('meta[property="og:url"]', { property: 'og:url', content: canonicalUrl });
+    upsertMeta('meta[property="og:image"]', { property: 'og:image', content: meta.image });
+    upsertMeta('meta[name="twitter:title"]', { name: 'twitter:title', content: meta.title });
+    upsertMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: meta.description });
+    upsertMeta('meta[name="twitter:image"]', { name: 'twitter:image', content: meta.image });
   }, [route]);
 
-  const navigate = (nextRoute: RouteId) => updateBrowserRoute({ page: nextRoute });
-  const openBlogPost = (slug: string) => updateBrowserRoute({ page: 'blog', blogSlug: slug });
   const activePage = route.page;
 
   const page = useMemo(() => {
     if (activePage === 'home') {
-      return <HomePage openApp={() => navigate('app')} openPost={(slug) => updateBrowserRoute({ page: 'blog', blogSlug: slug })} />;
+      return <HomePage navigate={navigateRoute} />;
     }
     if (activePage === 'blog') {
       const post = route.blogSlug ? BLOG_POST_BY_SLUG[route.blogSlug] : null;
       if (post) {
         return <BlogPostPage post={post} backToBlog={() => navigate('blog')} openApp={() => navigate('app')} />;
       }
-      return <BlogPage openPost={openBlogPost} />;
+      return <BlogPage navigate={navigateRoute} />;
     }
     if (activePage === 'about') return <AboutPage />;
     if (activePage === 'privacy') return <PrivacyPage consent={cookieConsent} onReopenCookieSettings={reopenCookieSettings} />;
     if (activePage === 'terms') return <TermsPage />;
     if (activePage === 'contact') return <ContactPage />;
+    if (activePage === 'notFound') return <NotFoundPage navigate={navigateRoute} />;
     return null;
-  }, [activePage, cookieConsent, openBlogPost, reopenCookieSettings, route.blogSlug]);
+  }, [activePage, cookieConsent, navigate, navigateRoute, reopenCookieSettings, route.blogSlug]);
 
   if (activePage === 'app') {
     return (
       <>
         <Workbench />
-        <AppOverlayNav navigate={navigate} activePage={activePage} />
+        <AppOverlayNav navigate={navigateRoute} activePage={activePage} />
         <CookieConsentBanner
           consent={cookieConsent}
           initialized={cookieConsentInitialized}
-          navigate={navigate}
+          navigate={navigateRoute}
           onSave={saveCookieConsent}
         />
       </>
@@ -2834,8 +3034,9 @@ export function App() {
     <div className="min-h-dvh bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-          <button
-            onClick={() => navigate('home')}
+          <RouteLink
+            route={{ page: 'home' }}
+            navigate={navigateRoute}
             className="inline-flex items-center gap-3 rounded-lg px-2 py-1 text-left text-slate-900 hover:bg-slate-100"
           >
             <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" className="h-9 w-9 object-contain" />
@@ -2843,12 +3044,13 @@ export function App() {
               <span className="block font-semibold tracking-tight">{BRAND_NAME}</span>
               <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">{BRAND_TAGLINE}</span>
             </span>
-          </button>
+          </RouteLink>
           <nav className="flex flex-wrap items-center gap-1">
             {ROUTE_ORDER.map((item) => (
-              <button
+              <RouteLink
                 key={item}
-                onClick={() => navigate(item)}
+                route={{ page: item }}
+                navigate={navigateRoute}
                 className={`rounded-md px-3 py-1.5 text-sm ${
                   activePage === item
                     ? 'bg-slate-900 text-white'
@@ -2856,7 +3058,7 @@ export function App() {
                 }`}
               >
                 {ROUTE_LABELS[item]}
-              </button>
+              </RouteLink>
             ))}
           </nav>
         </div>
@@ -2869,19 +3071,19 @@ export function App() {
           <p>&copy; 2026 {BRAND_NAME}</p>
           <div className="flex items-center gap-2">
             {(['privacy', 'terms', 'contact'] as RouteId[]).map((item) => (
-              <button key={item} onClick={() => navigate(item)} className="rounded px-2 py-1 hover:bg-slate-100">
+              <RouteLink key={item} route={{ page: item }} navigate={navigateRoute} className="rounded px-2 py-1 hover:bg-slate-100">
                 {ROUTE_LABELS[item]}
-              </button>
+              </RouteLink>
             ))}
           </div>
         </div>
       </footer>
 
-      <AppOverlayNav navigate={navigate} activePage={activePage} />
+      <AppOverlayNav navigate={navigateRoute} activePage={activePage} />
       <CookieConsentBanner
         consent={cookieConsent}
         initialized={cookieConsentInitialized}
-        navigate={navigate}
+        navigate={navigateRoute}
         onSave={saveCookieConsent}
       />
     </div>

@@ -6,17 +6,42 @@
     <title>BEAV.IT - 3D Woodworking Planner</title>
     <meta
       name="description"
-      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, and instant cut and shopping lists."
+      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, instant cut lists, and shopping lists."
     />
+    <meta name="robots" content="index,follow" />
     <meta name="theme-color" content="#f8fafc" />
     <link rel="canonical" href="https://beav.it/" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    <script>
+      (() => {
+        const knownRoutes = [
+          '/app',
+          '/blog',
+          '/about',
+          '/privacy',
+          '/privacy-policy',
+          '/terms',
+          '/contact',
+          '/blog/interactive-quickstart-build-your-first-layout',
+          '/blog/advanced-features-special-tools-and-control-panel',
+          '/blog/why-i-built-beav-it-and-fixed-my-neck-pain',
+          '/blog/choosing-screw-size-quickly-in-cabinet-projects',
+          '/blog/how-to-avoid-edge-blowout-when-placing-screws',
+          '/blog/why-planning-in-3d-saves-shop-time'
+        ];
+        const path = window.location.pathname.replace(/\/+$/, '');
+        if (knownRoutes.includes(path) && window.location.pathname === path) {
+          window.location.replace(`${path}/${window.location.search}${window.location.hash}`);
+        }
+      })();
+    </script>
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="BEAV.IT" />
     <meta property="og:title" content="BEAV.IT - 3D Woodworking Planner" />
     <meta
       property="og:description"
-      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, and instant cut and shopping lists."
+      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, instant cut lists, and shopping lists."
     />
     <meta property="og:url" content="https://beav.it/" />
     <meta property="og:image" content="https://beav.it/icons/logo-title.png" />
@@ -26,16 +51,46 @@
     <meta name="twitter:title" content="BEAV.IT - 3D Woodworking Planner" />
     <meta
       name="twitter:description"
-      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, and instant cut and shopping lists."
+      content="Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps, instant cut lists, and shopping lists."
     />
     <meta name="twitter:image" content="https://beav.it/icons/logo-title.png" />
     <meta name="google-adsense-account" content="ca-pub-5577933272302636" />
     <meta name="impact-site-verification" value="9ceda786-2f70-4d4d-a07f-cdf00b8c11d1" />
     <link rel="icon" type="image/svg+xml" href="/icons/beav-it-favicon.svg" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "BEAV.IT",
+        "url": "https://beav.it/",
+        "applicationCategory": "DesignApplication",
+        "operatingSystem": "Web",
+        "description": "A 3D woodworking planner for part layout, Auto Screw workflows, structural checks, cut lists, and shopping lists."
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main>
+        <h1>BEAV.IT - 3D Woodworking Planner</h1>
+        <p>
+          Plan woodworking projects in 3D with smart layout tools, Auto Screw, structural heat maps,
+          instant cut lists, and shopping lists.
+        </p>
+        <nav aria-label="Main pages">
+          <a href="/">Home</a>
+          <a href="/app/">App</a>
+          <a href="/blog/">Blog</a>
+          <a href="/about/">About</a>
+          <a href="/privacy/">Privacy Policy</a>
+          <a href="/terms/">Terms</a>
+          <a href="/contact/">Contact</a>
+        </nav>
+      </main>
+    </div>
+    <noscript>
+      BEAV.IT works best with JavaScript enabled, but public pages are available through direct links in the page source.
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
-    <script src="https://cdn.apitiny.net/scripts/v2.0/main.js" data-site-id="69f3a9c0cd4709cc5ee3913a" data-test-mode="false" async></script>
   </body>
 </html>
