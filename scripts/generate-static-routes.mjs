@@ -81,6 +81,86 @@ const blogPosts = [
       'In BEAV.IT, practical speed comes from combining move and rotate tools, edge snap, auto-centering camera, and export/import to iterate project versions quickly.',
     ],
   },
+  {
+    slug: 'garage-shelf-planning-checklist',
+    title: 'Garage shelf planning checklist: dimensions, spans, screws, and cut lists',
+    date: 'March 2026',
+    summary: 'A practical checklist for planning sturdy garage shelves before buying lumber or cutting plywood.',
+    body: [
+      'Garage shelves look simple until the first heavy storage bin exposes weak spans, uneven supports, or shelves that are just a little too shallow for the boxes you actually own.',
+      'Start by measuring the objects you want to store, not the wall. Storage totes, paint cans, tool cases, and seasonal bins should define shelf depth, vertical spacing, and bay width.',
+      'For a basic wall shelf, keep long unsupported plywood spans conservative. Wide spans with thin sheet goods can sag even when the frame feels strong, especially if the load sits near the front edge.',
+      'A good planning pass includes upright locations, shelf thickness, screw access, wall clearance, and whether the structure can be assembled in the space after cutting.',
+      'Before buying lumber, create a cut list that separates repeated parts from one-off pieces. Repeated uprights, front rails, back rails, and shelf panels are easier to batch cut accurately.',
+      'Plan screw lines before assembly. Marking fastener locations in the model helps avoid driving screws into awkward overlaps, plywood edges, or hardware you need to install later.',
+      'In BEAV.IT, build the shelf as separate boards and panels, use edge snapping to align rails, then check the generated shopping list before heading to the store.',
+      'The final check is simple: every shelf panel should have a clear load path into rails or uprights, and every rail should have enough fasteners or bearing surface to resist racking.',
+    ],
+  },
+  {
+    slug: 'plywood-cut-list-example-for-beginners',
+    title: 'Plywood cut list example for beginners: plan panels without wasting a sheet',
+    date: 'March 2026',
+    summary: 'Learn how to turn a plywood project into a cleaner cut list with fewer mistakes and less sheet waste.',
+    body: [
+      'Plywood waste usually comes from designing parts one at a time instead of thinking about the whole sheet. A good cut list starts with finished part sizes, then adds layout logic.',
+      'Write down every panel width, depth, and thickness before choosing a sheet. If the project uses both structural panels and visible faces, label which edges need to look clean.',
+      'Group identical parts early. Two side panels, two shelves, and four cleats should be obvious in your cut list so you do not accidentally measure each one separately at the saw.',
+      'Leave room for blade kerf, trimming, and imperfect factory edges. Even if software tracks finished dimensions, real cutting benefits from a little planning margin.',
+      'Think about grain direction and visible faces. For shop fixtures it may not matter, but for furniture and cabinets it can change how you orient every panel.',
+      'Use a staged cutting order: rough break-down cuts first, then final sizing. This is safer and more accurate than trying to wrestle a full sheet through every final cut.',
+      'With BEAV.IT, model the plywood parts, export the cut report, and use it as a planning checklist before making the first large sheet cut.',
+      'The goal is not just saving plywood. A clear cut list reduces mental load, keeps part labels consistent, and makes assembly feel less like guessing from a pile of similar rectangles.',
+    ],
+  },
+  {
+    slug: 'simple-workbench-frame-design-before-you-build',
+    title: 'Simple workbench frame design: what to check before you build',
+    date: 'March 2026',
+    summary: 'Plan a basic workbench frame by checking height, racking, leg placement, top support, and assembly order.',
+    body: [
+      'A workbench frame needs to feel boring in the best way: flat, stiff, predictable, and sized for the work you actually do. Most problems come from skipping the layout step.',
+      'Start with height. A bench for hand tool work may feel better lower than a general assembly table, while a sanding or light-duty project bench can be closer to counter height.',
+      'Next, decide where the legs sit relative to the top. Legs inset too far can make the bench tip or flex; legs placed too close to the edge can interfere with clamps and movement.',
+      'Racking resistance matters more than raw lumber size. Long rectangular frames need stretchers, aprons, diagonal bracing, or panels to keep the structure from twisting under side force.',
+      'Top support should match the surface material. A thick torsion-style top can span farther than thin plywood, but every top still benefits from predictable bearing points underneath.',
+      'Plan assembly access before committing to the frame. If a screw line is hidden by another part or too close to the floor, the build may be technically correct but annoying to assemble.',
+      'In BEAV.IT, model legs, aprons, stretchers, and top panels separately so you can inspect overlaps, duplicate repeated boards, and export a cut list for the bench frame.',
+      'Before cutting, check three things: the bench fits through the door if assembled elsewhere, clamps can reach useful edges, and the frame has a clear path to resist side-to-side movement.',
+    ],
+  },
+  {
+    slug: 'cabinet-box-layout-basics-for-diy-builders',
+    title: 'Cabinet box layout basics for DIY builders',
+    date: 'March 2026',
+    summary: 'Understand cabinet box parts, joinery planning, screw spacing, and layout checks before cutting panels.',
+    body: [
+      'A cabinet box is mostly rectangles, but the order and orientation of those rectangles matter. Side panels, top and bottom panels, back panels, shelves, face frames, and cleats all compete for space.',
+      'Decide whether the top and bottom sit between the sides or overlap the sides. That single choice changes finished width, panel dimensions, screw direction, and visible edges.',
+      'Back panels are easy to forget until they change the depth. A full back, recessed back, or thin hardboard back can each shift shelf depth and hardware clearance.',
+      'Plan screw spacing around plywood edges. Screws too close to a side edge can split layers or bulge the face, while screws too far from the joint may not pull panels tight.',
+      'Use temporary labels for left side, right side, top, bottom, fixed shelf, and adjustable shelf zones. This prevents mirrored parts from being cut correctly but assembled backwards.',
+      'If the cabinet will hold heavy items, consider adding a rear stretcher, cleat, or thicker bottom panel. The design should show where load transfers into the sides or wall.',
+      'In BEAV.IT, sketch the cabinet box in 3D first, then use Auto Screw to visualize fastener rows and the cut list to verify panel sizes before touching plywood.',
+      'A final cabinet layout review should answer four questions: what is the finished outside size, what are the exact panel sizes, which edges show, and how will the box be clamped or screwed together?',
+    ],
+  },
+  {
+    slug: 'how-to-reduce-lumber-waste-before-cutting',
+    title: 'How to reduce lumber waste before cutting a woodworking project',
+    date: 'March 2026',
+    summary: 'Use better planning, repeated dimensions, cut sequencing, and project review to waste less lumber.',
+    body: [
+      'Lumber waste is not only offcuts on the floor. It is also extra boards bought for uncertainty, replacement pieces after mistakes, and parts recut because the first layout was unclear.',
+      'Start by standardizing dimensions where possible. If several rails can share a length, make them identical instead of creating tiny differences that are hard to track.',
+      'Separate structural dimensions from cosmetic dimensions. A hidden cleat may not need the same precision or board grade as a visible rail, which can change how you use imperfect stock.',
+      'Create a rough cut sequence before final cuts. Breaking long boards into manageable pieces first can improve safety and reduce the chance of cutting a final part from the wrong end.',
+      'Account for defects. Knots, checks, twist, and bowed edges may force you to choose part locations carefully instead of assuming every inch of a board is usable.',
+      'Label parts as soon as they are cut. A perfect part becomes waste if it gets confused with a similar piece and drilled or trimmed incorrectly.',
+      'In BEAV.IT, model repeated lumber parts, compare the shopping list against your real stock, and keep exported reports with the project so dimensions do not live only in memory.',
+      'The best waste reduction habit is reviewing the design before cutting: confirm part count, finished sizes, assembly order, and the first three cuts you will actually make.',
+    ],
+  },
 ];
 
 const mainNav = [
@@ -164,7 +244,8 @@ const routes = [
     changefreq: 'monthly',
     priority: '0.7',
     type: 'website',
-    robots: 'index,follow',
+    robots: 'noindex,follow',
+    includeInSitemap: false,
     html: pageHtml({
       title: 'BEAV.IT Build Studio',
       intro: 'Use the free 3D woodworking planner to lay out boards, plywood, screws, and project assemblies.',
@@ -357,7 +438,7 @@ const writeRoute = async (sourceHtml, route) => {
 
 const sitemapXml = () => `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${routes.map((route) => `  <url>
+${routes.filter((route) => route.includeInSitemap !== false).map((route) => `  <url>
     <loc>${absoluteUrl(route.path)}</loc>
     <changefreq>${route.changefreq}</changefreq>
     <priority>${route.priority}</priority>
